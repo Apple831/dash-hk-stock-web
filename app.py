@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "core"))
+
 import dash
 import dash_bootstrap_components as dbc
 from dash import html
@@ -28,4 +32,4 @@ app.layout = dbc.Container(
 server = app.server
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)

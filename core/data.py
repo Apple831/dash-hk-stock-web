@@ -7,26 +7,46 @@
 #   • 原版直接 drop 異常 bar 會在時序中製造空洞，
 #     讓 EMA 把「上週四」當「昨天」算，污染指標。
 #   • 新版加 "is_anomaly" 欄位，下游可用 .where() 排除而不破壞時序。
+#
+# Dash 遷移（2026-04-29）：
+#   • 移除 streamlit 依賴（@st.cache_data → 模組級 TTL dict）
+#   • 移除 st.session_state 用法
 # ══════════════════════════════════════════════════════════════════
 
 import os
 import time
-import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
 import requests
 
 from config import TV_URL, TV_HEADERS
 from indicators import calculate_indicators
 
 
+# ── 模組級 TTL 快取（取代 @st.cache_data）────────────────────────
+_stock_cache: dict = {}
+_stock_cache_ts: dict = {}
+_CACHE_TTL = 600  # 10 分鐘
+
+
+def _cache_get(key: str):
+    if key in _stock_cache and time.time() - _stock_cache_ts.get(key, 0) < _CACHE_TTL:
+        return _stock_cache[key]
+    return None
+
+
+def _cache_set(key: str, val) -> None:
+    _stock_cache[key] = val
+    _stock_cache_ts[key] = time.time()
+
+
 # ── 股票清單 ───────────────────────────────────────────────────────
 def load_stocks_from_file() -> list:
-    if os.path.exists("stocks.txt"):
+    stocks_path = os.path.join(os.path.dirname(__file__), "stocks.txt")
+    if os.path.exists(stocks_path):
         stocks = [
             line.split("#")[0].strip()
-            for line in open("stocks.txt", "r", encoding="utf-8")
+            for line in open(stocks_path, "r", encoding="utf-8")
             if ".HK" in line
         ]
         if stocks:
@@ -35,11 +55,7 @@ def load_stocks_from_file() -> list:
 
 
 def load_stocks() -> list:
-    if st.session_state.get("stocks"):
-        return st.session_state["stocks"]
-    stocks = load_stocks_from_file()
-    st.session_state["stocks"] = stocks
-    return stocks
+    return load_stocks_from_file()
 
 
 # ── 時區安全處理 ────────────────────────────────────────────────────
@@ -80,13 +96,13 @@ def filter_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── 單股下載（加 10 分鐘快取，避免同一 ticker 重複下載）────────────
-# ttl=600：10 分鐘內再次請求同一 (ticker, period) 直接返回快取結果
-# 適用場景：分析 Tab、掃描 Tab 在同一 session 多次呼叫同一股票
-# 注意：手動「清除緩存」只清 session_state["stock_cache"]，
-#       st.cache_data 的快取由 Streamlit 獨立管理，需重啟才清除。
-@st.cache_data(ttl=600, show_spinner=False)
+# ── 單股下載（TTL=10 分鐘快取）────────────────────────────────────
 def get_stock_data(ticker: str, period: str = "1y") -> pd.DataFrame:
+    key = f"{ticker}|{period}"
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
     try:
         if ticker == "^HSTECH":
             for sym in ["800700.HK", "^HSTECH", "3032.HK"]:
@@ -106,7 +122,8 @@ def get_stock_data(ticker: str, period: str = "1y") -> pd.DataFrame:
         df = flatten_columns(df)
         df = normalize_index(df)
         df = df.dropna(subset=["Close"])
-        df = filter_anomalies(df)   # 只加 is_anomaly 欄位，不再 drop
+        df = filter_anomalies(df)
+        _cache_set(key, df)
         return df
     except Exception:
         return pd.DataFrame()
@@ -115,7 +132,7 @@ def get_stock_data(ticker: str, period: str = "1y") -> pd.DataFrame:
 # ── 批量下載 ────────────────────────────────────────────────────────
 def batch_download(tickers: list, period: str = "1y") -> dict:
     cache = {}
-    batch_size = 10  # 每批 10 隻，減少 Yahoo Finance 限速風險
+    batch_size = 10
 
     for batch_start in range(0, len(tickers), batch_size):
         batch = tickers[batch_start : batch_start + batch_size]
@@ -162,7 +179,6 @@ def batch_download(tickers: list, period: str = "1y") -> dict:
             except Exception:
                 continue
 
-        # 批次之間稍作等待，避免 Yahoo Finance 限速
         if batch_start + batch_size < len(tickers):
             time.sleep(1.5)
 
@@ -205,18 +221,7 @@ def fetch_stocks_from_tradingview(
 
 # ── Cache 助手 ────────────────────────────────────────────────────
 def get_cached(ticker: str) -> pd.DataFrame:
-    cache = st.session_state.get("stock_cache", {})
-    if ticker in cache:
-        return cache[ticker]
     df = get_stock_data(ticker)
     if not df.empty:
         return calculate_indicators(df)
     return pd.DataFrame()
-
-
-def get_cache_label() -> str:
-    ts = st.session_state.get("cache_time")
-    n  = len(st.session_state.get("stock_cache", {}))
-    if ts and n:
-        return f"✅ 已緩存 {n} 隻｜{ts}"
-    return "⚠️ 尚未緩存"
