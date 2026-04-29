@@ -18,6 +18,11 @@ navbar = dbc.NavbarSimple(
     color="dark",
     dark=True,
     fluid=True,
+    children=[
+        dbc.NavItem(dbc.NavLink("🌍 指數",   href="/")),
+        dbc.NavItem(dbc.NavLink("🟢 買入掃描", href="/buy-scan")),
+        dbc.NavItem(dbc.NavLink("🔴 賣出掃描", href="/sell-scan")),
+    ],
 )
 
 app.layout = dbc.Container(
