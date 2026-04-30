@@ -197,7 +197,7 @@ def fetch_stocks_from_tradingview(
             {"left": "market_cap_basic",             "operation": "greater", "right": min_cap_hkd / 7.8},
             {"left": "earnings_per_share_basic_ttm", "operation": "greater", "right": 0},
             {"left": "average_volume_30d_calc",      "operation": "greater", "right": min_vol_hkd / 7.8},
-            {"left": "close",                        "operation": "greater", "right": 5.0},
+            {"left": "close",                        "operation": "greater", "right": min_price_hkd},
         ],
         "columns": ["name", "description", "close", "market_cap_basic",
                     "earnings_per_share_basic_ttm", "average_volume_30d_calc",
@@ -220,8 +220,22 @@ def fetch_stocks_from_tradingview(
 
 
 # ── Cache 助手 ────────────────────────────────────────────────────
-def get_cached(ticker: str) -> pd.DataFrame:
-    df = get_stock_data(ticker)
+def get_cached(ticker: str, period: str = "1y") -> pd.DataFrame:
+    """
+    查詢順序：
+    1. diskcache（預下載的帶指標數據，TTL 24h）
+    2. yfinance 即時下載 + 計算指標
+    """
+    disk_key = f"stock_{ticker}_{period}"
+    try:
+        import cache_store
+        cached = cache_store.dc.get(disk_key)
+        if cached is not None and not cached.empty:
+            return cached
+    except Exception:
+        pass
+
+    df = get_stock_data(ticker, period)
     if not df.empty:
         return calculate_indicators(df)
     return pd.DataFrame()

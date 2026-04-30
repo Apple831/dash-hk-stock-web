@@ -4,7 +4,7 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from data import get_stock_data, load_stocks
+from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
 from config import STRATEGY_PRESETS, SELL_LABELS
 
@@ -68,10 +68,9 @@ def _scan(strategy_name: str) -> tuple[list, str]:
 
     for ticker in tickers:
         try:
-            raw = get_stock_data(ticker, "1y")
-            if raw.empty or len(raw) < 62:
+            df = get_cached(ticker, "1y")   # diskcache → yfinance fallback
+            if df.empty or len(df) < 62:
                 continue
-            df   = calculate_indicators(raw)
             sigs = precompute_signals(df)
 
             # OR 邏輯：至少一個賣出訊號為 True

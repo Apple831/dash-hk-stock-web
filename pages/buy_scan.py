@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 
-from data import get_stock_data, load_stocks
+from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
 from signals import signal_strength_score
 from config import STRATEGY_PRESETS, BUY_LABELS
@@ -66,10 +66,9 @@ def _scan(strategy_name: str) -> tuple[list, str]:
 
     for ticker in tickers:
         try:
-            raw = get_stock_data(ticker, "1y")
-            if raw.empty or len(raw) < 62:
+            df = get_cached(ticker, "1y")   # diskcache → yfinance fallback
+            if df.empty or len(df) < 62:
                 continue
-            df = calculate_indicators(raw)
             sigs = precompute_signals(df)
 
             # AND 邏輯：選取的每個買入信號都要 True

@@ -6,6 +6,8 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import html
 
+from components import downloader   # 注冊 callbacks
+
 app = dash.Dash(
     __name__,
     use_pages=True,
@@ -19,15 +21,30 @@ navbar = dbc.NavbarSimple(
     dark=True,
     fluid=True,
     children=[
-        dbc.NavItem(dbc.NavLink("🌍 指數",   href="/")),
+        dbc.NavItem(dbc.NavLink("🌍 指數",    href="/")),
         dbc.NavItem(dbc.NavLink("🟢 買入掃描", href="/buy-scan")),
         dbc.NavItem(dbc.NavLink("🔴 賣出掃描", href="/sell-scan")),
+        # 下載狀態文字（diskcache 準備好後更新）
+        dbc.NavItem(
+            html.Small(id="dl-navbar-status", className="text-muted me-2 mt-1"),
+        ),
+        # 下載按鈕
+        dbc.NavItem(
+            dbc.Button(
+                "⬇️ 下載數據",
+                id="dl-open-btn",
+                color="outline-light",
+                size="sm",
+                n_clicks=0,
+            ),
+        ),
     ],
 )
 
 app.layout = dbc.Container(
     [
         navbar,
+        *downloader.get_components(),   # modal + Store + Interval
         dash.page_container,
     ],
     fluid=True,
