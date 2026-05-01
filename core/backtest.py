@@ -39,7 +39,6 @@
 # ══════════════════════════════════════════════════════════════════
 
 import pandas as pd
-import streamlit as st
 from indicators import precompute_signals
 from config import B_NAMES, S_NAMES
 
@@ -419,9 +418,7 @@ def run_grid_search(
 
     pre_s = precompute_signals(df)
 
-    pbar = st.progress(0, text="網格搜索中...")
     for ci, (sl, tp, md) in enumerate(combos):
-        pbar.progress((ci + 1) / total_c, text=f"網格搜索 {ci+1}/{total_c}...")
         t, eq, _ = run_backtest(
             df, buy_sigs, sell_sigs,
             trade_size=trade_size, slippage=slippage,
@@ -444,7 +441,6 @@ def run_grid_search(
                 "交易次數":  m["交易次數"],
                 "最大連輸":  m["最大連輸"],
             })
-    pbar.empty()
 
     if not results:
         return pd.DataFrame()

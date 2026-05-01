@@ -1,0 +1,384 @@
+import dash
+from dash import html, dcc, dash_table, callback, Output, Input, State, no_update
+import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
+import pandas as pd
+
+from data import get_cached
+from backtest import run_backtest, calc_bt_metrics
+from config import STRATEGY_PRESETS
+
+dash.register_page(__name__, path="/backtest", name="回測")
+
+STRATEGY_OPTIONS = [{"label": n, "value": n} for n in STRATEGY_PRESETS]
+DEFAULT_STRATEGY  = list(STRATEGY_PRESETS.keys())[0]
+
+PERIOD_OPTIONS = [
+    {"label": "1年", "value": "1y"},
+    {"label": "2年", "value": "2y"},
+    {"label": "5年", "value": "5y"},
+]
+
+# ── Table 樣式 ────────────────────────────────────────────────────────
+_HDR  = {"backgroundColor": "#1a1a1a", "color": "#fff",
+          "fontWeight": "bold", "border": "1px solid #444"}
+_DAT  = {"backgroundColor": "#262626", "color": "#fff", "border": "1px solid #333"}
+_TRADE_COND = [
+    {"if": {"row_index": "odd"}, "backgroundColor": "#1f1f1f"},
+    {"if": {"filter_query": "{回報%} > 0", "column_id": "回報%"},
+     "color": "#26a69a", "fontWeight": "bold"},
+    {"if": {"filter_query": "{回報%} < 0", "column_id": "回報%"},
+     "color": "#ef5350", "fontWeight": "bold"},
+    {"if": {"filter_query": "{盈虧(HKD)} > 0", "column_id": "盈虧(HKD)"},
+     "color": "#26a69a"},
+    {"if": {"filter_query": "{盈虧(HKD)} < 0", "column_id": "盈虧(HKD)"},
+     "color": "#ef5350"},
+]
+
+TRADE_COLS = [
+    {"name": "買入日期",   "id": "買入日期"},
+    {"name": "賣出日期",   "id": "賣出日期"},
+    {"name": "買入價",     "id": "買入價"},
+    {"name": "賣出價",     "id": "賣出價"},
+    {"name": "回報%",      "id": "回報%"},
+    {"name": "盈虧(HKD)",  "id": "盈虧(HKD)"},
+    {"name": "持倉天數",   "id": "持倉天數"},
+    {"name": "賣出原因",   "id": "賣出原因"},
+]
+
+
+# ── UI 助手 ───────────────────────────────────────────────────────────
+def _metric_card(label: str, value: str, color: str = "white"):
+    return dbc.Col(
+        dbc.Card(dbc.CardBody([
+            html.Div(label, className="small text-muted mb-1"),
+            html.Div(value, className="fw-bold",
+                     style={"color": color, "fontSize": "1.05rem"}),
+        ], className="py-2 px-3"), className="h-100"),
+        xs=6, md=2,
+    )
+
+
+def _color_pct(val: float) -> str:
+    return "#26a69a" if val > 0 else ("#ef5350" if val < 0 else "white")
+
+
+# ── 圖表 ──────────────────────────────────────────────────────────────
+def _equity_chart(equity_df: pd.DataFrame, df: pd.DataFrame, trade_size: float) -> go.Figure:
+    fig = go.Figure()
+
+    if equity_df.empty:
+        fig.add_annotation(text="無交易記錄", x=0.5, y=0.5,
+                           xref="paper", yref="paper",
+                           font=dict(size=16, color="#888"), showarrow=False)
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)",
+                          plot_bgcolor="rgba(0,0,0,0)", height=300)
+        return fig
+
+    eq = equity_df["equity"].sort_index()
+
+    fig.add_trace(go.Scatter(
+        x=eq.index, y=eq.values,
+        fill="tozeroy",
+        fillcolor="rgba(38,166,154,0.08)",
+        line=dict(color="#26a69a", width=2),
+        name="策略資金曲線",
+    ))
+
+    # 持有不動基準線
+    if not df.empty and len(df) > 62:
+        bh_start = float(df["Close"].iloc[61])
+        if bh_start > 0:
+            bh = df["Close"].iloc[61:] / bh_start * trade_size
+            fig.add_trace(go.Scatter(
+                x=bh.index, y=bh.values,
+                line=dict(color="#7c4dff", width=1.5, dash="dash"),
+                name="持有不動", opacity=0.65,
+            ))
+
+    fig.add_hline(y=trade_size, line_dash="dot",
+                  line_color="rgba(255,255,255,0.2)")
+
+    fig.update_layout(
+        height=320,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(20,20,20,0.6)",
+        margin=dict(t=10, b=15, l=70, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+    )
+    fig.update_xaxes(gridcolor="rgba(255,255,255,0.05)")
+    fig.update_yaxes(gridcolor="rgba(255,255,255,0.05)",
+                     tickformat=",.0f", tickprefix="$")
+    return fig
+
+
+def _monthly_heatmap(equity_df: pd.DataFrame, trade_size: float) -> go.Figure:
+    if equity_df.empty or len(equity_df) < 2:
+        return go.Figure()
+
+    eq = equity_df["equity"].sort_index()
+
+    # 前向填充缺失日期，再取月末
+    try:
+        date_rng  = pd.date_range(eq.index[0], eq.index[-1], freq="D")
+        eq_full   = eq.reindex(date_rng).ffill()
+        eq_monthly = eq_full.resample("ME").last()
+    except Exception:
+        eq_monthly = eq.resample("ME").last()
+
+    # 首月補 trade_size 作為起始值
+    first_month = eq_monthly.index[0] - pd.offsets.MonthEnd(1)
+    if first_month not in eq_monthly.index:
+        eq_monthly = pd.concat([pd.Series([trade_size], index=[first_month]), eq_monthly])
+        eq_monthly.sort_index(inplace=True)
+
+    monthly_pct = eq_monthly.pct_change() * 100
+    monthly_pct = monthly_pct.dropna()
+
+    if monthly_pct.empty:
+        return go.Figure()
+
+    years        = sorted(monthly_pct.index.year.unique())
+    month_labels = ["1月", "2月", "3月", "4月", "5月", "6月",
+                    "7月", "8月", "9月", "10月", "11月", "12月"]
+    z, text_z = [], []
+    for yr in years:
+        row, txt = [], []
+        for m in range(1, 13):
+            mask = (monthly_pct.index.year == yr) & (monthly_pct.index.month == m)
+            if mask.any():
+                v = float(monthly_pct[mask].iloc[0])
+                row.append(v)
+                txt.append(f"{v:+.1f}%")
+            else:
+                row.append(None)
+                txt.append("")
+        z.append(row)
+        text_z.append(txt)
+
+    fig = go.Figure(go.Heatmap(
+        z=z, x=month_labels, y=[str(y) for y in years],
+        colorscale=[[0, "#ef5350"], [0.5, "#263238"], [1, "#26a69a"]],
+        zmid=0,
+        text=text_z, texttemplate="%{text}",
+        showscale=False,
+        hovertemplate="<b>%{y} %{x}</b><br>月回報: %{z:.2f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        height=max(160, len(years) * 42 + 60),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(t=10, b=10, l=45, r=10),
+        font=dict(color="#ccc", size=11),
+    )
+    return fig
+
+
+# ── 回測核心 ──────────────────────────────────────────────────────────
+def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
+         stop_loss, take_profit, max_hold):
+    preset = STRATEGY_PRESETS.get(strategy)
+    if not preset:
+        return None, None, None, None, "⚠️ 找不到策略"
+
+    ticker       = (ticker or "0700.HK").strip().upper()
+    trade_size   = float(trade_size or 100_000)
+    slippage_pct = float(slippage_pct_ui or 0.10) / 100  # UI 是 %, 轉 decimal
+    stop_loss_v  = float(stop_loss  or 0) or None
+    take_profit_v= float(take_profit or 0) or None
+    max_hold_v   = int(float(max_hold or 0))   or None
+
+    df = get_cached(ticker, period)
+    if df.empty:
+        return None, None, None, None, f"❌ 無法獲取 {ticker} 數據"
+    if len(df) < 62:
+        return None, None, None, None, f"⚠️ {ticker} 數據不足（{len(df)} 根K線）"
+
+    try:
+        trades, equity_df, _ = run_backtest(
+            df,
+            buy_sigs=preset["buy"],
+            sell_sigs=preset["sell"],
+            trade_size=trade_size,
+            slippage_pct=slippage_pct,
+            stop_loss_pct=stop_loss_v,
+            take_profit_pct=take_profit_v,
+            max_hold_days=max_hold_v,
+            min_hold_days=preset.get("min_hold_days"),
+            cooldown_days=preset.get("cooldown_days"),
+            ticker=ticker,
+        )
+    except ValueError as e:
+        return None, None, None, None, f"⚠️ 參數錯誤：{e}"
+    except Exception as e:
+        return None, None, None, None, f"❌ 回測失敗：{str(e)[:80]}"
+
+    metrics = calc_bt_metrics(trades, equity_df, trade_size)
+    return trades, equity_df, metrics, df, None
+
+
+# ── Layout ───────────────────────────────────────────────────────────
+def _param_col(label, input_id, **kwargs):
+    return dbc.Col([
+        html.Label(label, className="small text-muted mb-1 d-block"),
+        dbc.Input(id=input_id, type="number", size="sm", **kwargs),
+    ], xs=6, md=2, className="mb-2")
+
+
+layout = html.Div([
+    html.H4("📊 回測", className="mb-3"),
+
+    # ── 行 1：策略 + 股票 + 週期 ─────────────────────────────────────
+    dbc.Row([
+        dbc.Col(
+            dcc.Dropdown(
+                id="bt-strategy",
+                options=STRATEGY_OPTIONS,
+                value=DEFAULT_STRATEGY,
+                clearable=False,
+                style={"color": "#111"},
+            ),
+            md=6, className="mb-2",
+        ),
+        dbc.Col(
+            dbc.Input(id="bt-ticker", value="0700.HK",
+                      placeholder="股票代碼", type="text", size="sm"),
+            md=2, className="mb-2",
+        ),
+        dbc.Col(
+            dbc.RadioItems(
+                id="bt-period",
+                options=PERIOD_OPTIONS,
+                value="1y",
+                inline=True,
+                className="pt-1",
+            ),
+            md=3, className="mb-2",
+        ),
+    ], className="mb-1"),
+
+    # ── 行 2：回測參數 + 按鈕 ─────────────────────────────────────────
+    dbc.Row([
+        _param_col("每筆金額 (HKD)", "bt-trade-size", value=100000, step=10000),
+        _param_col("純滑點%",         "bt-slippage",   value=0.10,   step=0.01,  min=0),
+        _param_col("止損% (0=不啟用)", "bt-stop-loss",  value=0,      step=1,     min=0),
+        _param_col("止盈% (0=不啟用)", "bt-take-profit",value=0,      step=5,     min=0),
+        _param_col("最長持倉天數 (0=不限)", "bt-max-hold", value=0,   step=10,    min=0),
+        dbc.Col(
+            dbc.Button("📊 開始回測", id="bt-btn",
+                       color="primary", size="sm", className="w-100 mt-4"),
+            xs=6, md=2, className="mb-2",
+        ),
+    ], className="mb-3"),
+
+    html.Small(id="bt-status", className="text-muted d-block mb-3"),
+
+    dcc.Loading(type="circle", color="#42a5f5", children=[
+        html.Div(id="bt-result"),
+    ]),
+], className="p-3")
+
+
+# ── Callback ─────────────────────────────────────────────────────────
+@callback(
+    Output("bt-status", "children"),
+    Output("bt-result", "children"),
+    Input("bt-btn",          "n_clicks"),
+    State("bt-strategy",     "value"),
+    State("bt-ticker",       "value"),
+    State("bt-period",       "value"),
+    State("bt-trade-size",   "value"),
+    State("bt-slippage",     "value"),
+    State("bt-stop-loss",    "value"),
+    State("bt-take-profit",  "value"),
+    State("bt-max-hold",     "value"),
+    prevent_initial_call=True,
+)
+def cb_run_backtest(n_clicks, strategy, ticker, period,
+                    trade_size, slippage, stop_loss, take_profit, max_hold):
+
+    trades, equity_df, m, df, err = _run(
+        strategy, ticker, period, trade_size,
+        slippage, stop_loss, take_profit, max_hold,
+    )
+    if err:
+        return err, []
+    if not m:
+        return "⚠️ 無交易記錄（策略條件未觸發）", []
+
+    trade_size_v = float(trade_size or 100_000)
+    ticker_clean = (ticker or "0700.HK").strip().upper()
+    preset       = STRATEGY_PRESETS[strategy]
+    min_hold     = preset.get("min_hold_days", 0) or 0
+
+    # ── 指標卡片 ────────────────────────────────────────────────────
+    cards = dbc.Row([
+        _metric_card("累計回報%",      f"{m['累計回報%']:+.2f}%",
+                     _color_pct(m["累計回報%"])),
+        _metric_card("平均每筆回報%",  f"{m['平均每筆回報%']:+.2f}%",
+                     _color_pct(m["平均每筆回報%"])),
+        _metric_card("交易次數",       str(m["交易次數"])),
+        _metric_card("勝率%",          f"{m['勝率%']:.1f}%",
+                     "#26a69a" if m["勝率%"] >= 50 else "#ef5350"),
+        _metric_card("最大回撤%",      f"{m['最大回撤%']:.2f}%", "#ef5350"),
+        _metric_card("Profit Factor", f"{m['Profit Factor']:.2f}",
+                     "#26a69a" if m["Profit Factor"] >= 1.5 else "white"),
+    ], className="mb-3 g-2")
+
+    # 次要指標
+    sub_cards = dbc.Row([
+        _metric_card("平均盈利%",    f"{m['平均盈利%']:+.2f}%", "#26a69a"),
+        _metric_card("平均虧損%",    f"{m['平均虧損%']:+.2f}%", "#ef5350"),
+        _metric_card("最佳一筆%",    f"{m['最佳一筆%']:+.2f}%", "#26a69a"),
+        _metric_card("最差一筆%",    f"{m['最差一筆%']:+.2f}%", "#ef5350"),
+        _metric_card("平均持倉天數", f"{m['平均持倉天數']:.1f}日"),
+        _metric_card("最大連輸",     str(m["最大連輸"]),
+                     "#ef5350" if m["最大連輸"] >= 5 else "white"),
+    ], className="mb-4 g-2")
+
+    # ── 資金曲線 ─────────────────────────────────────────────────────
+    equity_fig = _equity_chart(equity_df, df, trade_size_v)
+    equity_section = html.Div([
+        html.H6("📈 資金曲線（含持有不動基準）", className="mt-2 mb-1"),
+        dcc.Graph(figure=equity_fig, config={"displayModeBar": False}),
+    ], className="mb-3")
+
+    # ── 月度熱力圖 ───────────────────────────────────────────────────
+    heatmap_fig = _monthly_heatmap(equity_df, trade_size_v)
+    heatmap_section = html.Div([
+        html.H6("🗓️ 月度損益熱力圖", className="mb-1"),
+        dcc.Graph(figure=heatmap_fig, config={"displayModeBar": False}),
+    ], className="mb-3") if not equity_df.empty else []
+
+    # ── 逐筆交易記錄 ─────────────────────────────────────────────────
+    display_trades = [
+        {k: v for k, v in t.items() if not k.startswith("_")}
+        for t in trades
+    ]
+    trade_table = html.Div([
+        html.H6(f"📋 逐筆交易記錄（共 {len(trades)} 筆）", className="mb-1"),
+        dash_table.DataTable(
+            columns=TRADE_COLS,
+            data=display_trades,
+            sort_action="native",
+            page_size=20,
+            style_header=_HDR,
+            style_data=_DAT,
+            style_data_conditional=_TRADE_COND,
+            style_cell={
+                "textAlign": "left",
+                "padding": "5px 12px",
+                "fontFamily": "monospace",
+                "fontSize": "0.85rem",
+            },
+            style_table={"overflowX": "auto"},
+        ),
+    ], className="mb-3")
+
+    status = (
+        f"✅ {ticker_clean} | {strategy} | "
+        f"最終資金 {m['最終資金']:,.0f} HKD | "
+        f"MIN{min_hold}日"
+    )
+
+    return status, [cards, sub_cards, equity_section, heatmap_section, trade_table]
