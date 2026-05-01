@@ -12,7 +12,6 @@
 # v17 行為沿用：方案 A 延伸追蹤、退化率 N/A 處理、強制平倉拆分。
 # ══════════════════════════════════════════════════════════════════
 
-import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -326,14 +325,7 @@ def run_portfolio_walk_forward(
     start         = 0
     n_total_folds = max(1, (total_days - is_days) // oos_days)
 
-    pbar   = st.progress(0, text="投資組合 Walk-Forward 啟動...")
-    status = st.empty()
-
     while start + is_days + oos_days <= total_days:
-        pbar.progress(
-            min((fold - 1) / n_total_folds, 0.99),
-            text=f"Fold {fold}／約 {n_total_folds} -- 正在跑 {len(stock_data)} 隻股票...",
-        )
 
         is_start_date  = all_dates[start]
         is_end_date    = all_dates[start + is_days - 1]
@@ -349,7 +341,6 @@ def run_portfolio_walk_forward(
         for ticker, full_df in stock_data.items():
             if full_df is None or full_df.empty or len(full_df) < 62:
                 continue
-            status.text(f"Fold {fold} -- {ticker}")
 
             is_mask = (full_df.index >= is_start_date) & (full_df.index <= is_end_date)
             is_df   = full_df[is_mask].copy()
@@ -455,8 +446,6 @@ def run_portfolio_walk_forward(
         start += oos_days
         fold  += 1
 
-    pbar.empty()
-    status.empty()
     return results
 
 
