@@ -25,6 +25,7 @@ navbar = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink("🟢 買入掃描", href="/buy-scan")),
         dbc.NavItem(dbc.NavLink("🔴 賣出掃描", href="/sell-scan")),
         dbc.NavItem(dbc.NavLink("🔍 個股分析", href="/analysis")),
+        dbc.NavItem(dbc.NavLink("📡 共振掃描", href="/multi-scan")),
         # 下載狀態文字（diskcache 準備好後更新）
         dbc.NavItem(
             html.Small(id="dl-navbar-status", className="text-muted me-2 mt-1"),
