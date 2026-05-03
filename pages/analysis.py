@@ -50,6 +50,65 @@ def _signal_item(name: str, detail: str, triggered: bool, kind: str):
     ], className="mb-2")
 
 
+def _verdict_card(buy_n: int, sell_n: int) -> dbc.Alert:
+    if buy_n >= 3 and buy_n > sell_n:
+        text, color = "偏多",   "success"
+    elif buy_n >= 1 and buy_n > sell_n:
+        text, color = "略偏多", "success"
+    elif sell_n >= 3 and sell_n > buy_n:
+        text, color = "偏空",   "danger"
+    elif sell_n >= 1 and sell_n > buy_n:
+        text, color = "略偏空", "warning"
+    else:
+        text, color = "中性",   "secondary"
+
+    return dbc.Alert(
+        [
+            html.Span("綜合判定：", className="fw-bold me-2"),
+            dbc.Badge(text, color=color, className="fs-6 px-3 py-1"),
+            html.Small(
+                f"  買入 {buy_n}/11 觸發 ｜ 賣出 {sell_n}/8 觸發",
+                className="ms-3 text-muted",
+            ),
+        ],
+        color=color,
+        className="py-2 mb-3",
+    )
+
+
+def _signal_col(signals: list, kind: str, label: str, total: int) -> dbc.Col:
+    """Split signals into triggered (shown) and untriggered (collapsed)."""
+    triggered = [(n, d, t) for n, d, t in signals if t]
+    pending   = [(n, d, t) for n, d, t in signals if not t]
+    n_hit     = len(triggered)
+
+    children = [
+        html.H6(f"{label}（{n_hit}/{total} 觸發）", className="mb-2"),
+        *[_signal_item(n, d, t, kind) for n, d, t in triggered],
+    ]
+
+    if pending:
+        collapse_id = f"analysis-{kind}-collapse"
+        toggle_id   = f"analysis-{kind}-toggle"
+        children += [
+            dbc.Button(
+                f"○ 未觸發 {len(pending)} 個  ▾",
+                id=toggle_id,
+                color="link",
+                size="sm",
+                className="p-0 mb-1 d-block",
+                style={"color": "#666", "fontSize": "0.82rem"},
+            ),
+            dbc.Collapse(
+                [_signal_item(n, d, t, kind) for n, d, t in pending],
+                id=collapse_id,
+                is_open=False,
+            ),
+        ]
+
+    return dbc.Col(children, md=6, className="mb-3")
+
+
 # ── 分析核心 ───────────────────────────────────────────────────────
 def _build_result(ticker: str, period: str):
     """Returns (status_text, result_children_list)"""
@@ -67,6 +126,14 @@ def _build_result(ticker: str, period: str):
     p   = df.iloc[-2]
     pct = (float(c["Close"]) / float(p["Close"]) - 1) * 100
 
+    close_val  = float(c["Close"])
+    ma20_val   = float(c["MA20"])
+    ma60_raw   = c.get("MA60")
+    ma60_val   = float(ma60_raw) if pd.notna(ma60_raw) else None
+
+    ma20_dist  = (close_val - ma20_val) / ma20_val * 100 if ma20_val else 0.0
+    ma60_dist  = (close_val - ma60_val) / ma60_val * 100 if ma60_val else None
+
     pct_color  = "#26a69a" if pct >= 0 else "#ef5350"
     rsi_val    = float(c["RSI"])
     rsi_color  = "#ef5350" if rsi_val > 70 else ("#26a69a" if rsi_val < 30 else "white")
@@ -75,39 +142,44 @@ def _build_result(ticker: str, period: str):
     macd_val   = float(c["MACD_Hist"]) if pd.notna(c.get("MACD_Hist")) else 0.0
     macd_color = "#26a69a" if macd_val >= 0 else "#ef5350"
 
-    pct_str = f"{'+' if pct >= 0 else ''}{pct:.2f}%"
+    pct_str     = f"{'+' if pct >= 0 else ''}{pct:.2f}%"
+    ma20_str    = f"{'+' if ma20_dist >= 0 else ''}{ma20_dist:.2f}%"
+    ma20_color  = "#26a69a" if ma20_dist >= 0 else "#ef5350"
+    ma60_str    = (f"{'+' if (ma60_dist or 0) >= 0 else ''}{ma60_dist:.2f}%"
+                   if ma60_dist is not None else "—")
+    ma60_color  = "#26a69a" if (ma60_dist or 0) >= 0 else "#ef5350"
 
-    # ── 指標卡片（6張，md=2 剛好填滿 12 列）────────────────────────
-    cards = dbc.Row([
-        _metric_card("現價", f"{float(c['Close']):.2f}  {pct_str}", pct_color),
-        _metric_card("MA20", f"{float(c['MA20']):.2f}"),
-        _metric_card("MA60", f"{float(c['MA60']):.2f}" if pd.notna(c.get("MA60")) else "—"),
-        _metric_card("RSI",  f"{rsi_val:.1f}", rsi_color),
-        _metric_card("J值",  f"{j_val:.1f}",  j_color),
-        _metric_card("MACD柱", f"{macd_val:.4f}", macd_color),
-    ], className="mb-4 g-2")
-
-    # ── 訊號列表 ─────────────────────────────────────────────────────
+    # ── 綜合判定 ─────────────────────────────────────────────────────
     sigs  = evaluate_signals(df)
     buy_n = sum(1 for _, _, t in sigs["buy"]  if t)
     sel_n = sum(1 for _, _, t in sigs["sell"] if t)
 
+    verdict = _verdict_card(buy_n, sel_n)
+
+    # ── 指標卡片（6張）──────────────────────────────────────────────
+    cards = dbc.Row([
+        _metric_card("現價",    f"{close_val:.2f}  {pct_str}", pct_color),
+        _metric_card("距MA20",  ma20_str, ma20_color),
+        _metric_card("距MA60",  ma60_str, ma60_color),
+        _metric_card("RSI",     f"{rsi_val:.1f}", rsi_color),
+        _metric_card("J值",     f"{j_val:.1f}",   j_color),
+        _metric_card("MACD柱",  f"{macd_val:.4f}", macd_color),
+    ], className="mb-4 g-2")
+
+    # ── 訊號列表（觸發/未觸發分開）───────────────────────────────────
     signals_row = dbc.Row([
-        dbc.Col([
-            html.H6(f"🟢 買入訊號（{buy_n}/11 觸發）", className="mb-2"),
-            *[_signal_item(n, d, t, "buy")  for n, d, t in sigs["buy"]],
-        ], md=6, className="mb-3"),
-        dbc.Col([
-            html.H6(f"🔴 賣出訊號（{sel_n}/8 觸發）", className="mb-2"),
-            *[_signal_item(n, d, t, "sell") for n, d, t in sigs["sell"]],
-        ], md=6, className="mb-3"),
+        _signal_col(sigs["buy"],  "buy",  "🟢 買入訊號", 11),
+        _signal_col(sigs["sell"], "sell", "🔴 賣出訊號",  8),
     ], className="mb-2")
 
     # ── K 線圖 ───────────────────────────────────────────────────────
     chart = dcc.Graph(figure=_chart(df, ticker, period),
                       config={"displayModeBar": False})
 
-    return f"✅ {ticker}｜{period}｜買入 {buy_n} 個｜賣出 {sel_n} 個", [cards, signals_row, chart]
+    return (
+        f"✅ {ticker}｜{period}｜買入 {buy_n} 個｜賣出 {sel_n} 個",
+        [verdict, cards, signals_row, chart],
+    )
 
 
 def _chart(df: pd.DataFrame, ticker: str, period: str) -> go.Figure:
@@ -196,7 +268,7 @@ layout = html.Div([
 ], className="p-3")
 
 
-# ── Callback ─────────────────────────────────────────────────────────
+# ── Callback：主分析 ──────────────────────────────────────────────────
 @callback(
     Output("analysis-status", "children"),
     Output("analysis-result", "children"),
@@ -210,3 +282,24 @@ def cb_run_analysis(n_clicks, ticker, period):
         return "⚠️ 請輸入股票代碼", no_update
     status, children = _build_result(ticker.strip().upper(), period)
     return status, children
+
+
+# ── Callback：未觸發訊號折疊切換 ──────────────────────────────────────
+@callback(
+    Output("analysis-buy-collapse",  "is_open"),
+    Input("analysis-buy-toggle",     "n_clicks"),
+    State("analysis-buy-collapse",   "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_buy_collapse(n, is_open):
+    return not is_open
+
+
+@callback(
+    Output("analysis-sell-collapse", "is_open"),
+    Input("analysis-sell-toggle",    "n_clicks"),
+    State("analysis-sell-collapse",  "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_sell_collapse(n, is_open):
+    return not is_open

@@ -8,6 +8,7 @@ import pandas as pd
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
 from signals import signal_strength_score
+from regime import detect_regime
 from config import STRATEGY_PRESETS, BUY_LABELS, PRESET_CUSTOM
 
 dash.register_page(__name__, path="/buy-scan", name="買入掃描")
@@ -18,12 +19,22 @@ STRATEGY_OPTIONS = (
 )
 DEFAULT_STRATEGY = list(STRATEGY_PRESETS.keys())[0]
 
+TOP_N_OPTIONS = [
+    {"label": "全部",   "value": 0},
+    {"label": "Top 5",  "value": 5},
+    {"label": "Top 10", "value": 10},
+    {"label": "Top 20", "value": 20},
+    {"label": "Top 30", "value": 30},
+]
+
 # ── DataTable 欄位 ─────────────────────────────────────────────────
 TABLE_COLS = [
     {"name": "代碼",    "id": "代碼"},
     {"name": "現價",    "id": "現價"},
     {"name": "漲跌%",   "id": "漲跌%"},
     {"name": "RSI",     "id": "RSI"},
+    {"name": "J值",     "id": "J值"},
+    {"name": "BB位置%", "id": "BB位置%"},
     {"name": "評分",    "id": "評分"},
     {"name": "命中信號", "id": "命中信號"},
 ]
@@ -42,7 +53,54 @@ _COND = [
      "color": "#ef5350", "fontWeight": "bold"},
     {"if": {"filter_query": "{評分} >= 50", "column_id": "評分"},
      "color": "#f9a825", "fontWeight": "bold"},
+    {"if": {"filter_query": "{J值} < 20", "column_id": "J值"},
+     "color": "#26a69a", "fontWeight": "bold"},
+    {"if": {"filter_query": "{J值} > 80", "column_id": "J值"},
+     "color": "#ef5350"},
+    {"if": {"filter_query": "{BB位置%} < 10", "column_id": "BB位置%"},
+     "color": "#26a69a", "fontWeight": "bold"},
+    {"if": {"filter_query": "{BB位置%} > 90", "column_id": "BB位置%"},
+     "color": "#ef5350"},
 ]
+
+
+# ── 恒指趨勢 banner ──────────────────────────────────────────────────
+def _hsi_trend_banner() -> dbc.Alert:
+    """Fetch HSI regime and build a contextual banner with b5/b6 guidance."""
+    try:
+        raw = get_stock_data("^HSI", "3mo")
+        df  = calculate_indicators(raw) if not raw.empty else raw
+        r   = detect_regime(df)
+    except Exception:
+        return dbc.Alert("⚠️ 無法獲取恒指數據", color="secondary", className="py-2 mb-2")
+
+    bucket = r.get("bucket", "")
+    label  = r.get("label", "—")
+    price  = r.get("price")
+    pct    = r.get("pct", 0.0) or 0.0
+
+    price_str = f"  |  {price:.0f}  ({pct:+.2f}%)" if price else ""
+
+    if "牛市" in bucket:
+        color    = "success"
+        b56_note = "⚠️ 牛市環境：b5/b6（RSI超賣／BB破下軌）為逆勢訊號，請謹慎使用"
+    elif "熊市" in bucket:
+        color    = "danger"
+        b56_note = "✅ 熊市環境：b5/b6 均值回歸歷史表現優異（弱熊 +8%／強熊 +12.5%）"
+    else:
+        color    = "warning"
+        b56_note = "ℹ️ 震盪市環境：b5/b6 均值回歸為主力工具"
+
+    return dbc.Alert(
+        [
+            html.Span("🌍 恒指制度：", className="fw-bold me-1"),
+            dbc.Badge(label, color=color, className="me-2 fs-6"),
+            html.Small(price_str, className="text-muted me-3"),
+            html.Small(b56_note, className="text-muted"),
+        ],
+        color=color,
+        className="py-2 mb-2",
+    )
 
 
 # ── 掃描核心 ──────────────────────────────────────────────────────────
@@ -77,18 +135,26 @@ def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
             if not all(bool(sigs[b].iloc[-1]) for b in buy_active):
                 continue
 
-            c = df.iloc[-1]
-            p = df.iloc[-2]
-            vol_ma = float(df["Volume"].rolling(20).mean().iloc[-1])
-            score  = signal_strength_score(df, len(buy_active), vol_ma)
-            pct    = (float(c["Close"]) / float(p["Close"]) - 1) * 100
+            c       = df.iloc[-1]
+            p       = df.iloc[-2]
+            vol_ma  = float(df["Volume"].rolling(20).mean().iloc[-1])
+            score   = signal_strength_score(df, len(buy_active), vol_ma)
+            pct     = (float(c["Close"]) / float(p["Close"]) - 1) * 100
+            j_val   = round(float(c["J"]), 1)
+
+            bb_upper = float(c["BB_upper"])
+            bb_lower = float(c["BB_lower"])
+            bb_range = bb_upper - bb_lower
+            bb_pos   = round((float(c["Close"]) - bb_lower) / bb_range * 100, 1) if bb_range > 0 else 50.0
 
             results.append({
-                "代碼":   ticker,
-                "現價":   round(float(c["Close"]), 2),
-                "漲跌%":  round(pct, 2),
-                "RSI":    round(float(c["RSI"]), 1),
-                "評分":   score,
+                "代碼":    ticker,
+                "現價":    round(float(c["Close"]), 2),
+                "漲跌%":   round(pct, 2),
+                "RSI":     round(float(c["RSI"]), 1),
+                "J值":     j_val,
+                "BB位置%": bb_pos,
+                "評分":    score,
                 "命中信號": hit_label,
             })
         except Exception:
@@ -103,6 +169,37 @@ def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
     else:
         status = f"🔍 完成：{total} 隻中沒有命中「{strategy_name}」{err_note}"
     return results, status
+
+
+# ── 掃描結果摘要 ──────────────────────────────────────────────────────
+def _scan_metrics(results: list) -> html.Div:
+    if not results:
+        return html.Div()
+    df       = pd.DataFrame(results)
+    n        = len(df)
+    avg_sc   = df["評分"].mean()
+    avg_rsi  = df["RSI"].mean()
+    avg_j    = df["J值"].mean()
+    pos_pct  = (df["漲跌%"] > 0).mean() * 100
+    low_bb   = (df["BB位置%"] < 20).sum()
+
+    def _card(icon, label, val):
+        return dbc.Col(
+            dbc.Card(dbc.CardBody([
+                html.Div(f"{icon} {label}", className="small text-muted mb-1"),
+                html.Div(val, className="fw-bold", style={"fontSize": "1rem"}),
+            ], className="py-2 px-3"), className="h-100"),
+            xs=6, md=2,
+        )
+
+    return dbc.Row([
+        _card("🎯", "命中",     str(n)),
+        _card("⭐", "平均評分", f"{avg_sc:.1f}"),
+        _card("📊", "平均RSI",  f"{avg_rsi:.1f}"),
+        _card("📈", "正漲跌",   f"{pos_pct:.0f}%"),
+        _card("📉", "平均J值",  f"{avg_j:.1f}"),
+        _card("🔻", "BB下軌區", f"{low_bb} 隻"),
+    ], className="g-2 mb-3")
 
 
 # ── K 線圖（MACD + RSI）─────────────────────────────────────────────
@@ -125,7 +222,6 @@ def _chart(ticker: str) -> go.Figure:
         subplot_titles=(f"{ticker} K線", "MACD", "RSI"),
     )
 
-    # K 線 + MA
     fig.add_trace(go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
         low=df["Low"], close=df["Close"],
@@ -136,7 +232,6 @@ def _chart(ticker: str) -> go.Figure:
         fig.add_trace(go.Scatter(x=df.index, y=df[col_],
                                  line=dict(color=color_, width=1.3), name=lbl), row=1, col=1)
 
-    # MACD
     bar_c = ["#26a69a" if v >= 0 else "#ef5350" for v in df["MACD_Hist"].fillna(0)]
     fig.add_trace(go.Bar(x=df.index, y=df["MACD_Hist"],
                          marker_color=bar_c, showlegend=False), row=2, col=1)
@@ -145,7 +240,6 @@ def _chart(ticker: str) -> go.Figure:
     fig.add_trace(go.Scatter(x=df.index, y=df["DEA"],
                              line=dict(color="#ff7043", width=1), showlegend=False), row=2, col=1)
 
-    # RSI
     fig.add_trace(go.Scatter(x=df.index, y=df["RSI"],
                              line=dict(color="#ce93d8", width=1.5), showlegend=False), row=3, col=1)
     for lvl, clr in [(70, "rgba(239,83,80,0.4)"), (50, "rgba(255,255,255,0.15)"),
@@ -169,7 +263,7 @@ def _chart(ticker: str) -> go.Figure:
 layout = html.Div([
     html.H4("🟢 買入掃描", className="mb-3"),
 
-    # 控制列
+    # 控制列（策略下拉 + Top N + 按鈕）
     dbc.Row([
         dbc.Col(
             dcc.Dropdown(
@@ -179,16 +273,27 @@ layout = html.Div([
                 clearable=False,
                 style={"color": "#111"},
             ),
-            md=8, sm=12, className="mb-2 mb-md-0",
+            md=6, sm=12, className="mb-2 mb-md-0",
+        ),
+        dbc.Col(
+            dcc.Dropdown(
+                id="bscan-topn",
+                options=TOP_N_OPTIONS,
+                value=0,
+                clearable=False,
+                style={"color": "#111"},
+                placeholder="Top N",
+            ),
+            md=2, sm=4, className="mb-2 mb-md-0",
         ),
         dbc.Col(
             dbc.Button("🔍 開始掃描", id="bscan-btn",
                        color="success", className="w-100"),
-            md=2, sm=12,
+            md=2, sm=8,
         ),
     ], align="center", className="mb-3"),
 
-    # 自定義買入訊號面板（選「✏️ 自定義」時顯示）
+    # 自定義買入訊號面板
     html.Div(
         id="bscan-custom-panel",
         style={"display": "none"},
@@ -214,11 +319,17 @@ layout = html.Div([
         ],
     ),
 
+    # 恒指趨勢提示（掃描後顯示）
+    html.Div(id="bscan-hsi-banner"),
+
     # 狀態列
     html.Small(id="bscan-status", className="text-muted"),
 
-    # Store（供 chart callback 讀取 ticker）
+    # Store（供 chart callback 讀取）
     dcc.Store(id="bscan-store"),
+
+    # 掃描結果摘要
+    html.Div(id="bscan-metrics", className="mt-2"),
 
     # 結果 DataTable
     dcc.Loading(type="circle", color="#26a69a", className="mt-2", children=[
@@ -228,7 +339,7 @@ layout = html.Div([
                 columns=TABLE_COLS,
                 data=[],
                 sort_action="native",
-                page_action="none",          # 不分頁，全部顯示
+                page_action="none",
                 row_selectable="single",
                 style_header=_HDR,
                 style_data=_DAT,
@@ -260,23 +371,33 @@ def cb_toggle_custom(strategy):
     return {} if strategy == PRESET_CUSTOM else {"display": "none"}
 
 
-# ── CB 1：按鈕 → 掃描 → Store + 狀態 + Table data ──────────────────
+# ── CB 1：掃描 → Store + 狀態 + Table + 摘要 + 恒指 banner ──────────
 @callback(
-    Output("bscan-store",     "data"),
-    Output("bscan-status",    "children"),
-    Output("bscan-table",     "data"),
-    Input("bscan-btn",        "n_clicks"),
-    State("bscan-strategy",   "value"),
-    State("bscan-custom-buy", "value"),
+    Output("bscan-store",      "data"),
+    Output("bscan-status",     "children"),
+    Output("bscan-table",      "data"),
+    Output("bscan-metrics",    "children"),
+    Output("bscan-hsi-banner", "children"),
+    Input("bscan-btn",         "n_clicks"),
+    State("bscan-strategy",    "value"),
+    State("bscan-custom-buy",  "value"),
+    State("bscan-topn",        "value"),
     prevent_initial_call=True,
 )
-def cb_run_scan(n_clicks, strategy, custom_buy):
+def cb_run_scan(n_clicks, strategy, custom_buy, top_n):
     rows, status = _scan(strategy, custom_buy)
-    return rows, status, rows
+    top_n = top_n or 0
+    display_rows = rows[:top_n] if top_n > 0 else rows
+    return (
+        rows,
+        status,
+        display_rows,
+        _scan_metrics(display_rows),
+        _hsi_trend_banner(),
+    )
 
 
 # ── CB 2：點選行 → 個股圖 ────────────────────────────────────────────
-# derived_virtual_data 對應排序後的顯示順序，避免 sort 後 index 對不上
 @callback(
     Output("bscan-chart",                  "children"),
     Input("bscan-table",                   "derived_virtual_selected_rows"),
