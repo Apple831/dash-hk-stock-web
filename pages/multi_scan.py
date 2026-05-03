@@ -6,6 +6,7 @@ from collections import defaultdict
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
 from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS
+from regime import detect_regime
 
 dash.register_page(__name__, path="/multi-scan", name="共振掃描")
 
@@ -87,48 +88,39 @@ _SELL_COLS = [
 
 # ── 恒指制度偵測 ──────────────────────────────────────────────────────
 def _detect_regime() -> tuple[str, list]:
-    """Returns (regime_label, card_components)"""
+    """Returns (bucket_label, card_components) — bucket matches _REGIME_RECS keys."""
     raw = get_stock_data("^HSI", "1y")
     if raw.empty:
         return "🟡 震盪市", [dbc.Alert("⚠️ 無法獲取恒指數據，預設震盪市策略", color="warning")]
 
     df  = calculate_indicators(raw)
-    c   = df.iloc[-1]
-    p   = df.iloc[-2]
-    l1  = bool(c["MA20"] > c["MA60"])
-    l2  = bool(c["Close"] > c["MA20"])
-    l3  = bool(c["MACD_Hist"] > 0)
-    n   = l1 + l2 + l3
-    pct = (float(c["Close"]) / float(p["Close"]) - 1) * 100
+    reg = detect_regime(df)
 
-    if n >= 3:
-        label, badge_color = "🟢 牛市", "success"
-    elif n == 0:
-        label, badge_color = "🔴 熊市", "danger"
-    else:
-        label, badge_color = "🟡 震盪市", "warning"
+    pct_color = "#26a69a" if (reg["pct"] or 0) >= 0 else "#ef5350"
+    recs      = _REGIME_RECS.get(reg["bucket"], [])
 
-    pct_color = "#26a69a" if pct >= 0 else "#ef5350"
-    recs      = _REGIME_RECS.get(label, [])
+    def _fmt(val, fmt):
+        return fmt.format(val) if val is not None else "—"
 
     card = dbc.Card([
         dbc.CardHeader(html.Strong("🌍 恒生指數 — 當前制度")),
         dbc.CardBody([
             dbc.Row([
-                dbc.Col(html.H5(f"{float(c['Close']):.0f}", className="mb-0"), width="auto"),
+                dbc.Col(html.H5(f"{reg['price']:.0f}" if reg["price"] else "—",
+                                className="mb-0"), width="auto"),
                 dbc.Col(
-                    html.Span(f"{pct:+.2f}%",
+                    html.Span(_fmt(reg["pct"], "{:+.2f}%"),
                               style={"color": pct_color, "fontWeight": "bold", "fontSize": "1.1rem"}),
                     className="text-end",
                 ),
             ], align="center", className="mb-2"),
-            dbc.Badge(label, color=badge_color, className="fs-6 mb-3 px-3 py-1"),
+            dbc.Badge(reg["label"], color=reg["color"], className="fs-6 mb-3 px-3 py-1"),
             dbc.Row([
                 dbc.Col([
-                    html.Small("📊 三層判斷", className="text-muted d-block fw-bold mb-1"),
-                    html.Small(f"{'✅' if l1 else '❌'} ①趨勢 MA20>MA60", className="d-block"),
-                    html.Small(f"{'✅' if l2 else '❌'} ②位置 Close>MA20", className="d-block"),
-                    html.Small(f"{'✅' if l3 else '❌'} ③動能 MACD柱>0",   className="d-block"),
+                    html.Small("📊 制度指標", className="text-muted d-block fw-bold mb-1"),
+                    html.Small(f"MA缺口：{_fmt(reg['ma_gap_pct'], '{:+.2f}%')}", className="d-block"),
+                    html.Small(f"MACD%：{_fmt(reg['macd_pct'], '{:+.4f}%')}",   className="d-block"),
+                    html.Small(f"波動CoV：{_fmt(reg['cov_20'], '{:.2f}%')}",     className="d-block"),
                 ], md=5),
                 dbc.Col([
                     html.Small("🎯 推薦策略", className="text-muted d-block fw-bold mb-1"),
@@ -138,7 +130,7 @@ def _detect_regime() -> tuple[str, list]:
         ]),
     ], className="mb-3 border-secondary")
 
-    return label, [card]
+    return reg["bucket"], [card]
 
 
 # ── 買入共振掃描 ──────────────────────────────────────────────────────

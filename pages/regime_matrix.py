@@ -8,6 +8,7 @@ from data import get_stock_data, load_stocks, batch_download
 from indicators import calculate_indicators
 from walk_forward import run_portfolio_walk_forward
 from config import ACTIVE_PRESETS, STRATEGY_PRESETS
+from regime import detect_regime
 
 dash.register_page(__name__, path="/regime-matrix", name="制度矩陣")
 
@@ -44,19 +45,10 @@ _CELL_LEFT = {**_CELL, "textAlign": "left"}
 def _fold_regime(hsi_df: pd.DataFrame, oos_start_date) -> str:
     if hsi_df is None or hsi_df.empty:
         return "🟡 震盪市"
-    idx = hsi_df.index.searchsorted(oos_start_date)
-    idx = min(max(0, idx), len(hsi_df) - 1)
-    row = hsi_df.iloc[idx]
-    layers = 0
-    try:
-        if row["MA20"] > row["MA60"]:   layers += 1
-        if row["Close"] > row["MA20"]:  layers += 1
-        if row["MACD_Hist"] > 0:        layers += 1
-    except (KeyError, TypeError):
-        pass
-    if layers == 3: return "🟢 牛市"
-    if layers == 0: return "🔴 熊市"
-    return "🟡 震盪市"
+    idx      = hsi_df.index.searchsorted(oos_start_date)
+    idx      = min(max(0, idx), len(hsi_df) - 1)
+    slice_df = hsi_df.iloc[: idx + 1]
+    return detect_regime(slice_df)["bucket"]
 
 
 def _aggregate_by_regime(wf_results: list, hsi_df: pd.DataFrame) -> dict:

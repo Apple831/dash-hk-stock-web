@@ -47,12 +47,11 @@ _COND = [
 ]
 
 
-# ── 掃描核心（賣出 OR 邏輯）──────────────────────────────────────────
+# ── 掃描核心（賣出 AND 邏輯）──────────────────────────────────────────
 def _scan(strategy_name: str) -> tuple[list, str]:
     """
-    賣出掃描：策略定義的賣出訊號只需任一命中（OR 邏輯），
-    與回測引擎一致（sell_signal = s1 | s2 | ...）。
-    結果按命中訊號數降序，訊號數相同時按 RSI 降序（越高越超買）。
+    賣出掃描：策略定義的所有賣出訊號必須同時觸發（AND 邏輯）才算命中。
+    結果按 RSI 降序（越高越超買）。
     """
     preset = STRATEGY_PRESETS.get(strategy_name)
     if not preset:
@@ -73,10 +72,10 @@ def _scan(strategy_name: str) -> tuple[list, str]:
                 continue
             sigs = precompute_signals(df)
 
-            # OR 邏輯：至少一個賣出訊號為 True
-            n_hit = sum(bool(sigs[s].iloc[-1]) for s in sell_active)
-            if n_hit == 0:
+            # AND 邏輯：所有勾選的賣出訊號必須同時觸發
+            if not all(bool(sigs[s].iloc[-1]) for s in sell_active):
                 continue
+            n_hit = len(sell_active)
 
             c   = df.iloc[-1]
             p   = df.iloc[-2]

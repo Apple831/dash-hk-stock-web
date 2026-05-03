@@ -7,6 +7,7 @@ import pandas as pd
 
 from data import get_stock_data
 from indicators import calculate_indicators
+from regime import detect_regime
 
 dash.register_page(__name__, path="/", name="指數")
 
@@ -20,59 +21,6 @@ PERIODS = [
 ]
 
 
-# ── 市場制度偵測（三層邏輯）────────────────────────────────────────
-# 層①：趨勢 — MA20 vs MA60（中線趨勢方向）
-# 層②：位置 — 收盤 vs MA20（短線強弱）
-# 層③：動能 — MACD 柱正負（買賣力道）
-# 三層全牛 → 🟢 牛市；三層全熊 → 🔴 熊市；其餘 → 🟡 震盪市
-def detect_regime(df: pd.DataFrame) -> dict:
-    if df.empty or len(df) < 60:
-        return {"label": "資料不足", "color": "secondary", "layers": [], "price": None, "pct": None}
-
-    c = df.iloc[-1]
-    p = df.iloc[-2]
-
-    l1 = bool(c["MA20"] > c["MA60"])
-    l2 = bool(c["Close"] > c["MA20"])
-    l3 = bool(c["MACD_Hist"] > 0)
-    n  = sum([l1, l2, l3])
-
-    layers = [
-        {
-            "name":  "① 趨勢 MA20/60",
-            "ok":    l1,
-            "val":   f"MA20={c['MA20']:.0f}  MA60={c['MA60']:.0f}",
-        },
-        {
-            "name":  "② 位置 收盤/MA20",
-            "ok":    l2,
-            "val":   f"Close={c['Close']:.2f}  MA20={c['MA20']:.2f}",
-        },
-        {
-            "name":  "③ 動能 MACD柱",
-            "ok":    l3,
-            "val":   f"MACD柱={c['MACD_Hist']:.4f}",
-        },
-    ]
-
-    if n >= 3:
-        label, color = "🟢 牛市", "success"
-    elif n == 0:
-        label, color = "🔴 熊市", "danger"
-    else:
-        label, color = "🟡 震盪市", "warning"
-
-    pct = (float(c["Close"]) / float(p["Close"]) - 1) * 100 if float(p["Close"]) != 0 else 0.0
-    return {
-        "label":  label,
-        "color":  color,
-        "layers": layers,
-        "price":  float(c["Close"]),
-        "pct":    pct,
-        "score":  n,
-    }
-
-
 def _regime_card(ticker: str, df: pd.DataFrame) -> dbc.Card:
     regime = detect_regime(df)
     name   = INDICES[ticker]
@@ -82,17 +30,37 @@ def _regime_card(ticker: str, df: pd.DataFrame) -> dbc.Card:
     pct_color  = "text-success" if pct >= 0 else "text-danger"
     pct_text   = f"{pct:+.2f}%" if regime["price"] is not None else "—"
 
-    layer_items = [
+    def _fmt(val, fmt):
+        return fmt.format(val) if val is not None else "—"
+
+    metric_items = [
         dbc.ListGroupItem(
             [
-                html.Span("✅ " if l["ok"] else "❌ "),
-                html.Strong(l["name"] + "：", style={"fontSize": "0.82rem"}),
-                html.Small(l["val"], className="text-muted"),
+                html.Strong("MA缺口：", style={"fontSize": "0.82rem"}),
+                html.Small(_fmt(regime["ma_gap_pct"], "{:+.2f}%"), className="text-muted"),
+                html.Small("  （>+2%上升趨勢 / < -2%下降趨勢）",
+                           className="text-muted", style={"fontSize": "0.74rem"}),
             ],
-            color="success" if l["ok"] else "danger",
             style={"padding": "5px 12px"},
-        )
-        for l in regime["layers"]
+        ),
+        dbc.ListGroupItem(
+            [
+                html.Strong("MACD%：", style={"fontSize": "0.82rem"}),
+                html.Small(_fmt(regime["macd_pct"], "{:+.4f}%"), className="text-muted"),
+                html.Small("  （>+0.5%強勢 / < -0.5%弱勢）",
+                           className="text-muted", style={"fontSize": "0.74rem"}),
+            ],
+            style={"padding": "5px 12px"},
+        ),
+        dbc.ListGroupItem(
+            [
+                html.Strong("波動CoV：", style={"fontSize": "0.82rem"}),
+                html.Small(_fmt(regime["cov_20"], "{:.2f}%"), className="text-muted"),
+                html.Small("  （>2%震盪市 / ≤2%轉折期）",
+                           className="text-muted", style={"fontSize": "0.74rem"}),
+            ],
+            style={"padding": "5px 12px"},
+        ),
     ]
 
     return dbc.Card(
@@ -116,7 +84,7 @@ def _regime_card(ticker: str, df: pd.DataFrame) -> dbc.Card:
                         color=regime["color"],
                         className="fs-6 mb-2 px-3 py-1",
                     ),
-                    dbc.ListGroup(layer_items, flush=True, className="mt-1"),
+                    dbc.ListGroup(metric_items, flush=True, className="mt-1"),
                 ]
             ),
         ],
