@@ -52,16 +52,22 @@ def _fold_regime(hsi_df: pd.DataFrame, oos_start_date) -> str:
 
 
 def _aggregate_by_regime(wf_results: list, hsi_df: pd.DataFrame) -> dict:
-    """Returns {regime: {avg_ret, win_rate, n, folds} or None}."""
-    acc = {r: {"rets": [], "wins": [], "n": 0} for r in REGIMES}
+    """Aggregates OOS trades by regime at each trade's buy date (trade-level tagging)."""
+    acc = {r: {"rets": [], "wins": [], "fold_set": set()} for r in REGIMES}
+
     for fold in wf_results:
         if not fold.get("valid_oos", False):
             continue
-        regime = _fold_regime(hsi_df, fold["oos_start"])
-        m = fold.get("oos_metrics", {}) or {}
-        acc[regime]["rets"].append(m.get("平均每筆回報%", 0.0))
-        acc[regime]["wins"].append(m.get("勝率%", 0.0))
-        acc[regime]["n"] += fold.get("oos_trade_count", 0)
+        fold_n = fold.get("fold", 0)
+        for trade in fold.get("oos_trades", []):
+            buy_date = trade.get("_buy_date")
+            if buy_date is None:
+                continue
+            regime = _fold_regime(hsi_df, buy_date)
+            ret    = float(trade.get("回報%", 0.0))
+            acc[regime]["rets"].append(ret)
+            acc[regime]["wins"].append(1 if ret > 0 else 0)
+            acc[regime]["fold_set"].add(fold_n)
 
     out = {}
     for r in REGIMES:
@@ -69,9 +75,9 @@ def _aggregate_by_regime(wf_results: list, hsi_df: pd.DataFrame) -> dict:
         if d["rets"]:
             out[r] = {
                 "avg_ret":  round(sum(d["rets"]) / len(d["rets"]), 2),
-                "win_rate": round(sum(d["wins"]) / len(d["wins"]), 1),
-                "n":        d["n"],
-                "folds":    len(d["rets"]),
+                "win_rate": round(sum(d["wins"]) / len(d["wins"]) * 100, 1),
+                "n":        len(d["rets"]),
+                "folds":    len(d["fold_set"]),
             }
         else:
             out[r] = None
@@ -193,7 +199,7 @@ def _build_summary_table(srm: dict):
         {"name": "均回報%",  "id": "ret"},
         {"name": "勝率%",    "id": "wr"},
         {"name": "OOS交易數","id": "n"},
-        {"name": "有效Fold", "id": "folds"},
+        {"name": "涉及Fold", "id": "folds"},
     ]
     rows = []
     for regime in REGIMES:
@@ -412,7 +418,7 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
 
         header = dbc.Alert(
             f"✅ 完成｜{n_strats} 策略 × {n_stocks} 股 × 多制度  "
-            f"（格式：均回報% / 交易數 / 勝率%，僅計有效 OOS Fold）",
+            f"（格式：均回報% / 交易數 / 勝率%，逐筆交易按入場日制度分類）",
             color="success", className="mb-3",
         )
 

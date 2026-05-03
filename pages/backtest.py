@@ -6,12 +6,15 @@ import pandas as pd
 
 from data import get_cached
 from backtest import run_backtest, calc_bt_metrics
-from config import STRATEGY_PRESETS
+from config import STRATEGY_PRESETS, BUY_LABELS, SELL_LABELS, PRESET_CUSTOM
 
 dash.register_page(__name__, path="/backtest", name="回測")
 
-STRATEGY_OPTIONS = [{"label": n, "value": n} for n in STRATEGY_PRESETS]
-DEFAULT_STRATEGY  = list(STRATEGY_PRESETS.keys())[0]
+STRATEGY_OPTIONS = (
+    [{"label": PRESET_CUSTOM, "value": PRESET_CUSTOM}]
+    + [{"label": n, "value": n} for n in STRATEGY_PRESETS]
+)
+DEFAULT_STRATEGY = list(STRATEGY_PRESETS.keys())[0]
 
 PERIOD_OPTIONS = [
     {"label": "1年", "value": "1y"},
@@ -176,17 +179,31 @@ def _monthly_heatmap(equity_df: pd.DataFrame, trade_size: float) -> go.Figure:
 
 # ── 回測核心 ──────────────────────────────────────────────────────────
 def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
-         stop_loss, take_profit, max_hold):
-    preset = STRATEGY_PRESETS.get(strategy)
-    if not preset:
-        return None, None, None, None, "⚠️ 找不到策略"
+         stop_loss, take_profit, max_hold,
+         custom_buy=None, custom_sell=None):
+
+    if strategy == PRESET_CUSTOM:
+        buy_sigs  = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(11))
+        sell_sigs = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
+        if not any(buy_sigs):
+            return None, None, None, None, "⚠️ 自定義模式請至少選擇一個買入信號"
+        min_hold_days = None
+        cooldown_days = None
+    else:
+        preset = STRATEGY_PRESETS.get(strategy)
+        if not preset:
+            return None, None, None, None, "⚠️ 找不到策略"
+        buy_sigs      = preset["buy"]
+        sell_sigs     = preset["sell"]
+        min_hold_days = preset.get("min_hold_days")
+        cooldown_days = preset.get("cooldown_days")
 
     ticker       = (ticker or "0700.HK").strip().upper()
     trade_size   = float(trade_size or 100_000)
-    slippage_pct = float(slippage_pct_ui or 0.10) / 100  # UI 是 %, 轉 decimal
+    slippage_pct = float(slippage_pct_ui or 0.10) / 100
     stop_loss_v  = float(stop_loss  or 0) or None
     take_profit_v= float(take_profit or 0) or None
-    max_hold_v   = int(float(max_hold or 0))   or None
+    max_hold_v   = int(float(max_hold or 0)) or None
 
     df = get_cached(ticker, period)
     if df.empty:
@@ -197,15 +214,15 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
     try:
         trades, equity_df, _ = run_backtest(
             df,
-            buy_sigs=preset["buy"],
-            sell_sigs=preset["sell"],
+            buy_sigs=buy_sigs,
+            sell_sigs=sell_sigs,
             trade_size=trade_size,
             slippage_pct=slippage_pct,
             stop_loss_pct=stop_loss_v,
             take_profit_pct=take_profit_v,
             max_hold_days=max_hold_v,
-            min_hold_days=preset.get("min_hold_days"),
-            cooldown_days=preset.get("cooldown_days"),
+            min_hold_days=min_hold_days,
+            cooldown_days=cooldown_days,
             ticker=ticker,
         )
     except ValueError as e:
@@ -271,6 +288,54 @@ layout = html.Div([
         ),
     ], className="mb-3"),
 
+    # 自定義訊號面板（選「✏️ 自定義」時顯示）
+    html.Div(
+        id="bt-custom-panel",
+        style={"display": "none"},
+        children=[
+            dbc.Card(dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Small(
+                            "📈 買入信號（AND 邏輯）",
+                            className="text-muted fw-bold d-block mb-2",
+                        ),
+                        dbc.Checklist(
+                            id="bt-custom-buy",
+                            options=[
+                                {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
+                                for i in range(11)
+                            ],
+                            value=[],
+                            inline=True,
+                            className="small",
+                            inputStyle={"cursor": "pointer"},
+                            labelStyle={"marginRight": "12px", "cursor": "pointer"},
+                        ),
+                    ], md=7, className="mb-2"),
+                    dbc.Col([
+                        html.Small(
+                            "📉 賣出訊號（任一觸發）",
+                            className="text-muted fw-bold d-block mb-2",
+                        ),
+                        dbc.Checklist(
+                            id="bt-custom-sell",
+                            options=[
+                                {"label": f" {SELL_LABELS[i]}", "value": f"s{i+1}"}
+                                for i in range(8)
+                            ],
+                            value=[],
+                            inline=True,
+                            className="small",
+                            inputStyle={"cursor": "pointer"},
+                            labelStyle={"marginRight": "12px", "cursor": "pointer"},
+                        ),
+                    ], md=5, className="mb-2"),
+                ]),
+            ], className="py-2 px-3"), className="border-warning mb-3"),
+        ],
+    ),
+
     html.Small(id="bt-status", className="text-muted d-block mb-3"),
 
     dcc.Loading(type="circle", color="#42a5f5", children=[
@@ -279,27 +344,39 @@ layout = html.Div([
 ], className="p-3")
 
 
-# ── Callback ─────────────────────────────────────────────────────────
+# ── Callbacks ────────────────────────────────────────────────────────
+@callback(
+    Output("bt-custom-panel", "style"),
+    Input("bt-strategy",      "value"),
+)
+def cb_toggle_custom(strategy):
+    return {} if strategy == PRESET_CUSTOM else {"display": "none"}
+
+
 @callback(
     Output("bt-status", "children"),
     Output("bt-result", "children"),
-    Input("bt-btn",          "n_clicks"),
-    State("bt-strategy",     "value"),
-    State("bt-ticker",       "value"),
-    State("bt-period",       "value"),
-    State("bt-trade-size",   "value"),
-    State("bt-slippage",     "value"),
-    State("bt-stop-loss",    "value"),
-    State("bt-take-profit",  "value"),
-    State("bt-max-hold",     "value"),
+    Input("bt-btn",           "n_clicks"),
+    State("bt-strategy",      "value"),
+    State("bt-ticker",        "value"),
+    State("bt-period",        "value"),
+    State("bt-trade-size",    "value"),
+    State("bt-slippage",      "value"),
+    State("bt-stop-loss",     "value"),
+    State("bt-take-profit",   "value"),
+    State("bt-max-hold",      "value"),
+    State("bt-custom-buy",    "value"),
+    State("bt-custom-sell",   "value"),
     prevent_initial_call=True,
 )
 def cb_run_backtest(n_clicks, strategy, ticker, period,
-                    trade_size, slippage, stop_loss, take_profit, max_hold):
+                    trade_size, slippage, stop_loss, take_profit, max_hold,
+                    custom_buy, custom_sell):
 
     trades, equity_df, m, df, err = _run(
         strategy, ticker, period, trade_size,
         slippage, stop_loss, take_profit, max_hold,
+        custom_buy=custom_buy, custom_sell=custom_sell,
     )
     if err:
         return err, []
@@ -308,8 +385,11 @@ def cb_run_backtest(n_clicks, strategy, ticker, period,
 
     trade_size_v = float(trade_size or 100_000)
     ticker_clean = (ticker or "0700.HK").strip().upper()
-    preset       = STRATEGY_PRESETS[strategy]
-    min_hold     = preset.get("min_hold_days", 0) or 0
+    if strategy == PRESET_CUSTOM:
+        min_hold = 0
+    else:
+        preset   = STRATEGY_PRESETS.get(strategy, {})
+        min_hold = preset.get("min_hold_days", 0) or 0
 
     # ── 指標卡片 ────────────────────────────────────────────────────
     cards = dbc.Row([

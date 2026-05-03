@@ -6,14 +6,14 @@ from plotly.subplots import make_subplots
 
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
-from config import STRATEGY_PRESETS, SELL_LABELS
+from config import STRATEGY_PRESETS, SELL_LABELS, PRESET_CUSTOM
 
 dash.register_page(__name__, path="/sell-scan", name="賣出掃描")
 
-STRATEGY_OPTIONS = [
-    {"label": name, "value": name}
-    for name in STRATEGY_PRESETS
-]
+STRATEGY_OPTIONS = (
+    [{"label": PRESET_CUSTOM, "value": PRESET_CUSTOM}]
+    + [{"label": name, "value": name} for name in STRATEGY_PRESETS]
+)
 DEFAULT_STRATEGY = list(STRATEGY_PRESETS.keys())[0]
 
 # ── DataTable 樣式 ────────────────────────────────────────────────────
@@ -48,26 +48,31 @@ _COND = [
 
 
 # ── 掃描核心（賣出 AND 邏輯）──────────────────────────────────────────
-def _scan(strategy_name: str) -> tuple[list, str]:
-    """
-    賣出掃描：策略定義的所有賣出訊號必須同時觸發（AND 邏輯）才算命中。
-    結果按 RSI 降序（越高越超買）。
-    """
-    preset = STRATEGY_PRESETS.get(strategy_name)
-    if not preset:
-        return [], "⚠️ 找不到策略"
+def _scan(strategy_name: str, custom_sell: list = None) -> tuple[list, str]:
+    """AND 邏輯：所有選中賣出訊號必須同時觸發。"""
+    if strategy_name == PRESET_CUSTOM:
+        if not custom_sell:
+            return [], "⚠️ 自定義模式請至少選擇一個賣出訊號"
+        sell_active = sorted(custom_sell, key=lambda x: int(x[1:]))
+        hit_label   = " | ".join(SELL_LABELS[int(s[1:]) - 1] for s in sell_active)
+    else:
+        preset = STRATEGY_PRESETS.get(strategy_name)
+        if not preset:
+            return [], "⚠️ 找不到策略"
+        sell_sigs   = preset.get("sell", ())
+        sell_active = [f"s{i+1}" for i, v in enumerate(sell_sigs) if v]
+        hit_label   = " | ".join(SELL_LABELS[i] for i, v in enumerate(sell_sigs) if v)
 
-    sell_sigs   = preset.get("sell", ())
-    sell_active = [f"s{i+1}" for i, v in enumerate(sell_sigs) if v]
     if not sell_active:
         return [], "⚠️ 策略未設定任何賣出訊號"
 
+    n_hit   = len(sell_active)
     tickers = load_stocks()
     results, errors = [], 0
 
     for ticker in tickers:
         try:
-            df = get_cached(ticker, "1y")   # diskcache → yfinance fallback
+            df = get_cached(ticker, "1y")
             if df.empty or len(df) < 62:
                 continue
             sigs = precompute_signals(df)
@@ -75,17 +80,10 @@ def _scan(strategy_name: str) -> tuple[list, str]:
             # AND 邏輯：所有勾選的賣出訊號必須同時觸發
             if not all(bool(sigs[s].iloc[-1]) for s in sell_active):
                 continue
-            n_hit = len(sell_active)
 
             c   = df.iloc[-1]
             p   = df.iloc[-2]
             pct = (float(c["Close"]) / float(p["Close"]) - 1) * 100
-
-            hit_labels = [
-                SELL_LABELS[i]
-                for i, v in enumerate(sell_sigs)
-                if v and bool(sigs[f"s{i+1}"].iloc[-1])
-            ]
 
             results.append({
                 "代碼":   ticker,
@@ -94,7 +92,7 @@ def _scan(strategy_name: str) -> tuple[list, str]:
                 "RSI":    round(float(c["RSI"]), 1),
                 "J值":    round(float(c["J"]), 1),
                 "訊號數": n_hit,
-                "命中訊號": " | ".join(hit_labels),
+                "命中訊號": hit_label,
             })
         except Exception:
             errors += 1
@@ -189,6 +187,32 @@ layout = html.Div([
         ),
     ], align="center", className="mb-3"),
 
+    # 自定義賣出訊號面板（選「✏️ 自定義」時顯示）
+    html.Div(
+        id="sscan-custom-panel",
+        style={"display": "none"},
+        children=[
+            dbc.Card(dbc.CardBody([
+                html.Small(
+                    "📋 選擇賣出訊號（AND 邏輯：所有選中訊號必須同時觸發）",
+                    className="text-muted fw-bold d-block mb-2",
+                ),
+                dbc.Checklist(
+                    id="sscan-custom-sell",
+                    options=[
+                        {"label": f" {SELL_LABELS[i]}", "value": f"s{i+1}"}
+                        for i in range(8)
+                    ],
+                    value=[],
+                    inline=True,
+                    className="small",
+                    inputStyle={"cursor": "pointer"},
+                    labelStyle={"marginRight": "14px", "cursor": "pointer"},
+                ),
+            ], className="py-2 px-3"), className="border-danger mb-2"),
+        ],
+    ),
+
     html.Small(id="sscan-status", className="text-muted"),
 
     dcc.Store(id="sscan-store"),
@@ -222,17 +246,27 @@ layout = html.Div([
 ], className="p-3")
 
 
+# ── CB 0：自定義面板顯示/隱藏 ───────────────────────────────────────
+@callback(
+    Output("sscan-custom-panel", "style"),
+    Input("sscan-strategy",      "value"),
+)
+def cb_toggle_custom(strategy):
+    return {} if strategy == PRESET_CUSTOM else {"display": "none"}
+
+
 # ── CB 1：掃描 ──────────────────────────────────────────────────────
 @callback(
-    Output("sscan-store",   "data"),
-    Output("sscan-status",  "children"),
-    Output("sscan-table",   "data"),
-    Input("sscan-btn",      "n_clicks"),
-    State("sscan-strategy", "value"),
+    Output("sscan-store",      "data"),
+    Output("sscan-status",     "children"),
+    Output("sscan-table",      "data"),
+    Input("sscan-btn",         "n_clicks"),
+    State("sscan-strategy",    "value"),
+    State("sscan-custom-sell", "value"),
     prevent_initial_call=True,
 )
-def cb_run_scan(n_clicks, strategy):
-    rows, status = _scan(strategy)
+def cb_run_scan(n_clicks, strategy, custom_sell):
+    rows, status = _scan(strategy, custom_sell)
     return rows, status, rows
 
 

@@ -8,15 +8,14 @@ import pandas as pd
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
 from signals import signal_strength_score
-from config import STRATEGY_PRESETS, BUY_LABELS
+from config import STRATEGY_PRESETS, BUY_LABELS, PRESET_CUSTOM
 
 dash.register_page(__name__, path="/buy-scan", name="買入掃描")
 
-# ── 策略下拉選單（只顯示 ACTIVE，不顯示 LEGACY 對照組）──────────────
-STRATEGY_OPTIONS = [
-    {"label": name, "value": name}
-    for name in STRATEGY_PRESETS
-]
+STRATEGY_OPTIONS = (
+    [{"label": PRESET_CUSTOM, "value": PRESET_CUSTOM}]
+    + [{"label": name, "value": name} for name in STRATEGY_PRESETS]
+)
 DEFAULT_STRATEGY = list(STRATEGY_PRESETS.keys())[0]
 
 # ── DataTable 欄位 ─────────────────────────────────────────────────
@@ -47,17 +46,21 @@ _COND = [
 
 
 # ── 掃描核心 ──────────────────────────────────────────────────────────
-def _scan(strategy_name: str) -> tuple[list, str]:
-    """
-    Returns (results, status_text)
-    只有 AND 邏輯命中所有指定買入信號的股票才進入結果。
-    """
-    preset = STRATEGY_PRESETS.get(strategy_name)
-    if not preset:
-        return [], "⚠️ 找不到策略"
+def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
+    """AND 邏輯：所有選中買入信號必須同時觸發。"""
+    if strategy_name == PRESET_CUSTOM:
+        if not custom_buy:
+            return [], "⚠️ 自定義模式請至少選擇一個買入信號"
+        buy_active = sorted(custom_buy, key=lambda x: int(x[1:]))
+        hit_label  = " | ".join(BUY_LABELS[int(b[1:]) - 1] for b in buy_active)
+    else:
+        preset = STRATEGY_PRESETS.get(strategy_name)
+        if not preset:
+            return [], "⚠️ 找不到策略"
+        buy_sigs   = preset.get("buy", ())
+        buy_active = [f"b{i+1}" for i, v in enumerate(buy_sigs) if v]
+        hit_label  = " | ".join(BUY_LABELS[i] for i, v in enumerate(buy_sigs) if v)
 
-    buy_sigs = preset.get("buy", ())
-    buy_active = [f"b{i+1}" for i, v in enumerate(buy_sigs) if v]
     if not buy_active:
         return [], "⚠️ 策略未設定任何買入信號"
 
@@ -66,12 +69,11 @@ def _scan(strategy_name: str) -> tuple[list, str]:
 
     for ticker in tickers:
         try:
-            df = get_cached(ticker, "1y")   # diskcache → yfinance fallback
+            df = get_cached(ticker, "1y")
             if df.empty or len(df) < 62:
                 continue
             sigs = precompute_signals(df)
 
-            # AND 邏輯：選取的每個買入信號都要 True
             if not all(bool(sigs[b].iloc[-1]) for b in buy_active):
                 continue
 
@@ -87,7 +89,7 @@ def _scan(strategy_name: str) -> tuple[list, str]:
                 "漲跌%":  round(pct, 2),
                 "RSI":    round(float(c["RSI"]), 1),
                 "評分":   score,
-                "命中信號": " | ".join(BUY_LABELS[i] for i, v in enumerate(buy_sigs) if v),
+                "命中信號": hit_label,
             })
         except Exception:
             errors += 1
@@ -186,6 +188,32 @@ layout = html.Div([
         ),
     ], align="center", className="mb-3"),
 
+    # 自定義買入訊號面板（選「✏️ 自定義」時顯示）
+    html.Div(
+        id="bscan-custom-panel",
+        style={"display": "none"},
+        children=[
+            dbc.Card(dbc.CardBody([
+                html.Small(
+                    "📋 選擇買入信號（AND 邏輯：所有選中信號必須同時觸發）",
+                    className="text-muted fw-bold d-block mb-2",
+                ),
+                dbc.Checklist(
+                    id="bscan-custom-buy",
+                    options=[
+                        {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
+                        for i in range(11)
+                    ],
+                    value=[],
+                    inline=True,
+                    className="small",
+                    inputStyle={"cursor": "pointer"},
+                    labelStyle={"marginRight": "14px", "cursor": "pointer"},
+                ),
+            ], className="py-2 px-3"), className="border-success mb-2"),
+        ],
+    ),
+
     # 狀態列
     html.Small(id="bscan-status", className="text-muted"),
 
@@ -223,17 +251,27 @@ layout = html.Div([
 ], className="p-3")
 
 
+# ── CB 0：自定義面板顯示/隱藏 ───────────────────────────────────────
+@callback(
+    Output("bscan-custom-panel", "style"),
+    Input("bscan-strategy",      "value"),
+)
+def cb_toggle_custom(strategy):
+    return {} if strategy == PRESET_CUSTOM else {"display": "none"}
+
+
 # ── CB 1：按鈕 → 掃描 → Store + 狀態 + Table data ──────────────────
 @callback(
-    Output("bscan-store",   "data"),
-    Output("bscan-status",  "children"),
-    Output("bscan-table",   "data"),
-    Input("bscan-btn",      "n_clicks"),
-    State("bscan-strategy", "value"),
+    Output("bscan-store",     "data"),
+    Output("bscan-status",    "children"),
+    Output("bscan-table",     "data"),
+    Input("bscan-btn",        "n_clicks"),
+    State("bscan-strategy",   "value"),
+    State("bscan-custom-buy", "value"),
     prevent_initial_call=True,
 )
-def cb_run_scan(n_clicks, strategy):
-    rows, status = _scan(strategy)
+def cb_run_scan(n_clicks, strategy, custom_buy):
+    rows, status = _scan(strategy, custom_buy)
     return rows, status, rows
 
 

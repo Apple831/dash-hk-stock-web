@@ -134,7 +134,16 @@ def _detect_regime() -> tuple[str, list]:
 
 
 # ── 買入共振掃描 ──────────────────────────────────────────────────────
-def _resonance_scan(strategy_names: list) -> tuple[list, str]:
+def _triggered_recently(sigs: dict, active: list, n_days: int) -> bool:
+    """True if ALL active signals fired simultaneously on any bar in the last n_days."""
+    n = min(n_days, len(next(iter(sigs.values()))))
+    for i in range(1, n + 1):
+        if all(bool(sigs[b].iloc[-i]) for b in active):
+            return True
+    return False
+
+
+def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list, str]:
     tickers = load_stocks()
     results, errors = [], 0
 
@@ -152,7 +161,7 @@ def _resonance_scan(strategy_names: list) -> tuple[list, str]:
                     continue
                 buy_sigs = preset.get("buy", ())
                 active   = [f"b{i+1}" for i, v in enumerate(buy_sigs) if v]
-                if active and all(bool(sigs[b].iloc[-1]) for b in active):
+                if active and _triggered_recently(sigs, active, lookback_days):
                     hit.append(sname)
 
             if not hit:
@@ -300,8 +309,31 @@ layout = html.Div([
     # ── 買入共振面板 ─────────────────────────────────────────────────
     html.Div(id="mscan-buy-panel", children=[
         html.Div(id="mscan-regime-card"),
-        dbc.Button("🔍 開始共振掃描", id="mscan-buy-btn",
-                   color="success", size="sm", className="mb-2"),
+        dbc.Row([
+            dbc.Col(
+                html.Small("📅 訊號回溯交易日：", className="text-muted"),
+                width="auto", className="d-flex align-items-center",
+            ),
+            dbc.Col(
+                dbc.RadioItems(
+                    id="mscan-lookback",
+                    options=[
+                        {"label": "今日",  "value": 1},
+                        {"label": "近3日", "value": 3},
+                        {"label": "近5日", "value": 5},
+                        {"label": "近10日","value": 10},
+                    ],
+                    value=1,
+                    inline=True,
+                    className="small",
+                ),
+            ),
+            dbc.Col(
+                dbc.Button("🔍 開始共振掃描", id="mscan-buy-btn",
+                           color="success", size="sm"),
+                width="auto",
+            ),
+        ], align="center", className="mb-2 g-2"),
         html.Small(id="mscan-buy-status", className="text-muted d-block mb-2"),
         dcc.Loading(type="circle", color="#26a69a", children=[
             html.Div(id="mscan-buy-result"),
@@ -360,9 +392,11 @@ def cb_switch_mode(mode):
     Output("mscan-buy-result", "children"),
     Input("mscan-buy-btn",     "n_clicks"),
     State("mscan-regime-store","data"),
+    State("mscan-lookback",    "value"),
     prevent_initial_call=True,
 )
-def cb_buy_scan(n_clicks, regime_label):
+def cb_buy_scan(n_clicks, regime_label, lookback):
+    lookback = int(lookback or 1)
     if not regime_label:
         regime_label, _ = _detect_regime()
 
@@ -370,7 +404,7 @@ def cb_buy_scan(n_clicks, regime_label):
     if not recs:
         return "⚠️ 無推薦策略", []
 
-    results, status = _resonance_scan(recs)
+    results, status = _resonance_scan(recs, lookback)
     return status, _grouped_result(results, len(recs))
 
 
