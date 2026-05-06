@@ -59,6 +59,7 @@ _BUY_COLS = [
     {"name": "RSI",     "id": "RSI"},
     {"name": "共振數",  "id": "共振數"},
     {"name": "命中策略", "id": "命中策略"},
+    {"name": "觸發時間", "id": "觸發時間"},
 ]
 
 _SELL_COLS = [
@@ -68,6 +69,7 @@ _SELL_COLS = [
     {"name": "RSI",         "id": "RSI"},
     {"name": "訊號數",      "id": "訊號數"},
     {"name": "觸發賣出訊號", "id": "觸發賣出訊號"},
+    {"name": "觸發時間",    "id": "觸發時間"},
 ]
 
 
@@ -133,13 +135,33 @@ def _detect_regime() -> tuple[str, list]:
 
 
 # ── 買入共振掃描 ──────────────────────────────────────────────────────
-def _triggered_recently(sigs: dict, active: list, n_days: int) -> bool:
-    """True if ALL active signals fired simultaneously on any bar in the last n_days."""
+def _days_ago(sigs: dict, active: list, n_days: int) -> int:
+    """Returns bars back (0=today) when ALL active signals last fired simultaneously, or -1."""
     n = min(n_days, len(next(iter(sigs.values()))))
     for i in range(1, n + 1):
         if all(bool(sigs[b].iloc[-i]) for b in active):
-            return True
-    return False
+            return i - 1
+    return -1
+
+
+def _sell_check(sigs: dict, n_days: int) -> tuple[list, int]:
+    """Collect sell signals triggered in window. Returns (labels, days_to_most_recent)."""
+    n = min(n_days, len(next(iter(sigs.values()))))
+    best: dict[int, int] = {}
+    for j in range(len(SELL_LABELS)):
+        for i in range(1, n + 1):
+            if bool(sigs[f"s{j+1}"].iloc[-i]):
+                best[j] = i - 1
+                break
+    if not best:
+        return [], -1
+    labels      = [SELL_LABELS[j] for j in sorted(best)]
+    most_recent = min(best.values())
+    return labels, most_recent
+
+
+def _day_label(days: int) -> str:
+    return "今天" if days == 0 else f"{days} 交易日前"
 
 
 def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list, str]:
@@ -153,15 +175,19 @@ def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list,
                 continue
             sigs = precompute_signals(df)
 
-            hit = []
+            hit        = []
+            hit_days   = []
             for sname in strategy_names:
                 preset = STRATEGY_PRESETS.get(sname)
                 if not preset:
                     continue
                 buy_sigs = preset.get("buy", ())
                 active   = [f"b{i+1}" for i, v in enumerate(buy_sigs) if v]
-                if active and _triggered_recently(sigs, active, lookback_days):
-                    hit.append(sname)
+                if active:
+                    d = _days_ago(sigs, active, lookback_days)
+                    if d >= 0:
+                        hit.append(sname)
+                        hit_days.append(d)
 
             if not hit:
                 continue
@@ -176,6 +202,7 @@ def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list,
                 "RSI":     round(float(c["RSI"]), 1),
                 "共振數":  len(hit),
                 "命中策略": " | ".join(hit),
+                "觸發時間": _day_label(min(hit_days)),
             })
         except Exception:
             errors += 1
@@ -240,7 +267,7 @@ def _parse_tickers(textarea: str) -> list:
     return tickers
 
 
-def _sell_alert(tickers: list) -> tuple[list, str]:
+def _sell_alert(tickers: list, lookback_days: int = 1) -> tuple[list, str]:
     results, errors = [], 0
 
     for ticker in tickers:
@@ -251,32 +278,31 @@ def _sell_alert(tickers: list) -> tuple[list, str]:
                 results.append({
                     "代碼": ticker, "現價": "—", "漲跌%": "—",
                     "RSI": "—", "訊號數": 0, "觸發賣出訊號": "❌ 數據不足",
+                    "觸發時間": "—",
                 })
                 continue
 
-            sigs      = precompute_signals(df)
-            triggered = [
-                SELL_LABELS[i]
-                for i in range(len(SELL_LABELS))
-                if bool(sigs[f"s{i+1}"].iloc[-1])
-            ]
+            sigs              = precompute_signals(df)
+            triggered, days   = _sell_check(sigs, lookback_days)
 
             c   = df.iloc[-1]
             p   = df.iloc[-2]
             pct = (float(c["Close"]) / float(p["Close"]) - 1) * 100
             results.append({
-                "代碼":       ticker,
-                "現價":       round(float(c["Close"]), 2),
-                "漲跌%":      round(pct, 2),
-                "RSI":        round(float(c["RSI"]), 1),
-                "訊號數":     len(triggered),
+                "代碼":        ticker,
+                "現價":        round(float(c["Close"]), 2),
+                "漲跌%":       round(pct, 2),
+                "RSI":         round(float(c["RSI"]), 1),
+                "訊號數":      len(triggered),
                 "觸發賣出訊號": " | ".join(triggered) if triggered else "—",
+                "觸發時間":    _day_label(days) if days >= 0 else "—",
             })
         except Exception:
             errors += 1
             results.append({
                 "代碼": ticker, "現價": "—", "漲跌%": "—",
                 "RSI": "—", "訊號數": 0, "觸發賣出訊號": "❌ 下載失敗",
+                "觸發時間": "—",
             })
 
     results.sort(key=lambda x: (-x["訊號數"] if isinstance(x["訊號數"], int) else 0,
@@ -354,8 +380,31 @@ layout = html.Div([
                 "border": "1px solid #444",
             },
         ),
-        dbc.Button("⚠️ 掃描賣出訊號", id="mscan-sell-btn",
-                   color="danger", size="sm", className="mb-2"),
+        dbc.Row([
+            dbc.Col(
+                html.Small("📅 訊號回溯交易日：", className="text-muted"),
+                width="auto", className="d-flex align-items-center",
+            ),
+            dbc.Col(
+                dbc.RadioItems(
+                    id="mscan-sell-lookback",
+                    options=[
+                        {"label": "今日",   "value": 1},
+                        {"label": "近3日",  "value": 3},
+                        {"label": "近5日",  "value": 5},
+                        {"label": "近10日", "value": 10},
+                    ],
+                    value=1,
+                    inline=True,
+                    className="small",
+                ),
+            ),
+            dbc.Col(
+                dbc.Button("⚠️ 掃描賣出訊號", id="mscan-sell-btn",
+                           color="danger", size="sm"),
+                width="auto",
+            ),
+        ], align="center", className="mb-2 g-2"),
         html.Small(id="mscan-sell-status", className="text-muted d-block mb-2"),
         dcc.Loading(type="circle", color="#ef5350", children=[
             html.Div(id="mscan-sell-result"),
@@ -419,11 +468,12 @@ def cb_buy_scan(n_clicks, regime_label, lookback):
 @callback(
     Output("mscan-sell-status", "children"),
     Output("mscan-sell-result", "children"),
-    Input("mscan-sell-btn",     "n_clicks"),
-    State("mscan-sell-tickers", "value"),
+    Input("mscan-sell-btn",         "n_clicks"),
+    State("mscan-sell-tickers",     "value"),
+    State("mscan-sell-lookback",    "value"),
     prevent_initial_call=True,
 )
-def cb_sell_alert(n_clicks, textarea):
+def cb_sell_alert(n_clicks, textarea, lookback):
     if not textarea or not textarea.strip():
         return "⚠️ 請輸入持倉代碼", no_update
 
@@ -431,7 +481,7 @@ def cb_sell_alert(n_clicks, textarea):
     if not tickers:
         return "⚠️ 無有效代碼，請確認格式（如 0700.HK）", no_update
 
-    results, status = _sell_alert(tickers)
+    results, status = _sell_alert(tickers, int(lookback or 1))
 
     table = dash_table.DataTable(
         columns=_SELL_COLS,

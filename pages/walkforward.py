@@ -328,14 +328,14 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
     else:  # portfolio
         stock_data = {}
         for t in load_stocks():
-            df_t = get_cached(t, "2y")
+            df_t = get_cached(t, total_period)
             if not df_t.empty and len(df_t) >= 62:
                 stock_data[t] = df_t
         if len(stock_data) < 5:
             return None, True, (
                 f"⚠️ 投資組合模式需要至少 5 隻股票的緩存數據"
-                f"（目前 {len(stock_data)} 隻）。"
-                "請先用「⬇️ 下載數據」下載 2 年數據。"
+                f"（目前 {len(stock_data)} 隻，週期 {total_period}）。"
+                f"請先用「⬇️ 下載數據」下載對應年期（{total_period}）數據。"
             )
         try:
             results = run_portfolio_walk_forward(
@@ -403,6 +403,12 @@ layout = html.Div([
                 value="3y",
                 inline=True,
             ),
+            html.Small(
+                "💡 建議先批量下載對應年期數據",
+                id="wf-portfolio-hint",
+                className="text-warning mt-1 d-block",
+                style={"display": "none"},
+            ),
         ], xs=12, md=2, className="mb-2"),
 
         _param_col("IS 窗口（月）", "wf-is-mo",  value=12, min=3,  step=3),
@@ -431,14 +437,18 @@ layout = html.Div([
 @callback(
     Output("wf-ticker",       "disabled"),
     Output("wf-total-period", "options"),
+    Output("wf-portfolio-hint", "style"),
     Input("wf-mode",          "value"),
 )
 def cb_mode_change(mode):
     if mode == "portfolio":
-        # 投資組合模式：股票代碼無效，固定用 2y 緩存
-        portfolio_opts = [{"label": "2年（緩存）", "value": "2y"}]
-        return True, portfolio_opts
-    return False, PERIOD_OPTIONS
+        portfolio_opts = [
+            {"label": "2年（緩存）", "value": "2y"},
+            {"label": "3年（緩存）", "value": "3y"},
+            {"label": "5年（緩存）", "value": "5y"},
+        ]
+        return True, portfolio_opts, {}
+    return False, PERIOD_OPTIONS, {"display": "none"}
 
 
 # ── Callback：開始驗證 ────────────────────────────────────────────────

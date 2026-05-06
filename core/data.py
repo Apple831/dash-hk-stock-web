@@ -23,22 +23,6 @@ from config import TV_URL, TV_HEADERS
 from indicators import calculate_indicators
 
 
-# ── 模組級 TTL 快取（取代 @st.cache_data）────────────────────────
-_stock_cache: dict = {}
-_stock_cache_ts: dict = {}
-_CACHE_TTL = 600  # 10 分鐘
-
-
-def _cache_get(key: str):
-    if key in _stock_cache and time.time() - _stock_cache_ts.get(key, 0) < _CACHE_TTL:
-        return _stock_cache[key]
-    return None
-
-
-def _cache_set(key: str, val) -> None:
-    _stock_cache[key] = val
-    _stock_cache_ts[key] = time.time()
-
 
 # ── 股票清單 ───────────────────────────────────────────────────────
 def load_stocks_from_file() -> list:
@@ -99,12 +83,16 @@ def filter_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── 單股下載（TTL=10 分鐘快取）────────────────────────────────────
+# ── 單股下載（diskcache TTL=1 小時）──────────────────────────────
 def get_stock_data(ticker: str, period: str = "1y") -> pd.DataFrame:
-    key = f"{ticker}|{period}"
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
+    key = f"raw_{ticker}_{period}"
+    try:
+        import cache_store
+        cached = cache_store.dc.get(key)
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
 
     try:
         if ticker == "^HSTECH":
@@ -126,7 +114,11 @@ def get_stock_data(ticker: str, period: str = "1y") -> pd.DataFrame:
         df = normalize_index(df)
         df = df.dropna(subset=["Close"])
         df = filter_anomalies(df)
-        _cache_set(key, df)
+        try:
+            import cache_store
+            cache_store.dc.set(key, df, expire=3600)
+        except Exception:
+            pass
         return df
     except Exception:
         return pd.DataFrame()

@@ -1,10 +1,11 @@
 import dash
-from dash import html, dcc, dash_table, callback, Output, Input, State, no_update
+from dash import html, dcc, dash_table, callback, Output, Input, State, no_update, ctx
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import pandas as pd
 
-from data import get_cached
+from data import get_cached, load_stocks
 from backtest import run_backtest, calc_bt_metrics
 from config import STRATEGY_PRESETS, BUY_LABELS, SELL_LABELS, PRESET_CUSTOM
 
@@ -177,6 +178,128 @@ def _monthly_heatmap(equity_df: pd.DataFrame, trade_size: float) -> go.Figure:
     return fig
 
 
+# ── K 線 + 交易標記圖 ─────────────────────────────────────────────────
+def _trade_chart(df: pd.DataFrame, trades: list) -> go.Figure:
+    if df.empty or not trades:
+        return go.Figure()
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df["Open"], high=df["High"],
+        low=df["Low"],   close=df["Close"],
+        name="K線",
+        increasing_line_color="#26a69a",
+        decreasing_line_color="#ef5350",
+        showlegend=False,
+    ))
+    for col, color, name in [("MA20", "#f9a825", "MA20"), ("MA60", "#7c4dff", "MA60")]:
+        if col in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df[col],
+                line=dict(color=color, width=1),
+                name=name,
+            ))
+
+    buy_x, buy_y = [], []
+    sell_x, sell_y, sell_c = [], [], []
+
+    for t in trades:
+        try:
+            bd = pd.Timestamp(t["買入日期"])
+            buy_x.append(bd)
+            buy_y.append(float(t["買入價"]))
+        except Exception:
+            pass
+        sd_str = t.get("賣出日期", "")
+        if "（持倉中）" not in sd_str and t.get("賣出價"):
+            try:
+                sell_x.append(pd.Timestamp(sd_str))
+                sell_y.append(float(t["賣出價"]))
+                sell_c.append("#26a69a" if float(t.get("回報%", 0)) > 0 else "#ef5350")
+            except Exception:
+                pass
+
+    if buy_x:
+        fig.add_trace(go.Scatter(
+            x=buy_x, y=buy_y, mode="markers",
+            marker=dict(symbol="triangle-up", size=12, color="#26a69a",
+                        line=dict(color="#fff", width=1)),
+            name="買入",
+        ))
+    if sell_x:
+        fig.add_trace(go.Scatter(
+            x=sell_x, y=sell_y, mode="markers",
+            marker=dict(symbol="triangle-down", size=12, color=sell_c,
+                        line=dict(color="#fff", width=1)),
+            name="賣出",
+        ))
+
+    fig.update_layout(
+        height=420,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(20,20,20,0.6)",
+        margin=dict(t=20, b=15, l=60, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, x=0),
+        xaxis_rangeslider_visible=False,
+    )
+    fig.update_xaxes(gridcolor="rgba(255,255,255,0.05)")
+    fig.update_yaxes(gridcolor="rgba(255,255,255,0.05)")
+    return fig
+
+
+# ── 全倉掃描回測 ──────────────────────────────────────────────────────
+_PORTFOLIO_COLS = [
+    {"name": "代碼",          "id": "代碼"},
+    {"name": "平均每筆%",     "id": "平均每筆%"},
+    {"name": "勝率%",         "id": "勝率%"},
+    {"name": "交易次數",      "id": "交易次數"},
+    {"name": "Profit Factor", "id": "Profit Factor"},
+    {"name": "最大回撤%",     "id": "最大回撤%"},
+]
+_PORTFOLIO_COND = [
+    {"if": {"row_index": "odd"}, "backgroundColor": "#1f1f1f"},
+    {"if": {"filter_query": "{平均每筆%} > 0", "column_id": "平均每筆%"},
+     "color": "#26a69a", "fontWeight": "bold"},
+    {"if": {"filter_query": "{平均每筆%} < 0", "column_id": "平均每筆%"},
+     "color": "#ef5350", "fontWeight": "bold"},
+    {"if": {"filter_query": "{Profit Factor} >= 1.5", "column_id": "Profit Factor"},
+     "color": "#26a69a"},
+]
+
+
+def _run_portfolio_scan(strategy, period, trade_size, slippage,
+                        stop_loss, take_profit, max_hold,
+                        custom_buy, custom_sell):
+    tickers = load_stocks()
+    rows    = []
+    errors  = 0
+
+    for ticker in tickers:
+        try:
+            trades_t, eq_t, m_t, _, err_t = _run(
+                strategy, ticker, period, trade_size,
+                slippage, stop_loss, take_profit, max_hold,
+                custom_buy=custom_buy, custom_sell=custom_sell,
+            )
+            if err_t or not m_t or m_t["交易次數"] == 0:
+                continue
+            rows.append({
+                "代碼":          ticker,
+                "平均每筆%":     round(m_t["平均每筆回報%"], 2),
+                "勝率%":         round(m_t["勝率%"], 1),
+                "交易次數":      m_t["交易次數"],
+                "Profit Factor": round(m_t["Profit Factor"], 2),
+                "最大回撤%":     round(m_t["最大回撤%"], 2),
+            })
+        except Exception:
+            errors += 1
+
+    rows.sort(key=lambda x: -x["平均每筆%"])
+    return rows, errors
+
+
 # ── 回測核心 ──────────────────────────────────────────────────────────
 def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
          stop_loss, take_profit, max_hold,
@@ -286,6 +409,11 @@ layout = html.Div([
                        color="primary", size="sm", className="w-100 mt-4"),
             xs=6, md=2, className="mb-2",
         ),
+        dbc.Col(
+            dbc.Button("🚀 全倉掃描", id="bt-portfolio-btn",
+                       color="warning", size="sm", className="w-100 mt-4"),
+            xs=6, md=2, className="mb-2",
+        ),
     ], className="mb-3"),
 
     # 自定義訊號面板（選「✏️ 自定義」時顯示）
@@ -356,23 +484,68 @@ def cb_toggle_custom(strategy):
 @callback(
     Output("bt-status", "children"),
     Output("bt-result", "children"),
-    Input("bt-btn",           "n_clicks"),
-    State("bt-strategy",      "value"),
-    State("bt-ticker",        "value"),
-    State("bt-period",        "value"),
-    State("bt-trade-size",    "value"),
-    State("bt-slippage",      "value"),
-    State("bt-stop-loss",     "value"),
-    State("bt-take-profit",   "value"),
-    State("bt-max-hold",      "value"),
-    State("bt-custom-buy",    "value"),
-    State("bt-custom-sell",   "value"),
+    Input("bt-btn",              "n_clicks"),
+    Input("bt-portfolio-btn",    "n_clicks"),
+    State("bt-strategy",         "value"),
+    State("bt-ticker",           "value"),
+    State("bt-period",           "value"),
+    State("bt-trade-size",       "value"),
+    State("bt-slippage",         "value"),
+    State("bt-stop-loss",        "value"),
+    State("bt-take-profit",      "value"),
+    State("bt-max-hold",         "value"),
+    State("bt-custom-buy",       "value"),
+    State("bt-custom-sell",      "value"),
     prevent_initial_call=True,
 )
-def cb_run_backtest(n_clicks, strategy, ticker, period,
+def cb_run_backtest(n_single, n_portfolio, strategy, ticker, period,
                     trade_size, slippage, stop_loss, take_profit, max_hold,
                     custom_buy, custom_sell):
 
+    trigger = ctx.triggered_id
+
+    # ── 🚀 全倉掃描回測 ──────────────────────────────────────────────
+    if trigger == "bt-portfolio-btn":
+        rows, errors = _run_portfolio_scan(
+            strategy, period, trade_size, slippage,
+            stop_loss, take_profit, max_hold,
+            custom_buy, custom_sell,
+        )
+        if not rows:
+            return "⚠️ 全倉掃描：無任何股票有交易記錄（請先下載緩存數據）", []
+
+        err_note = f"，{errors} 隻略過" if errors else ""
+        status = (
+            f"🚀 全倉掃描完成：{len(rows)} 隻有交易記錄"
+            f"（策略：{strategy}，週期：{period}）{err_note}"
+        )
+        table = dash_table.DataTable(
+            columns=_PORTFOLIO_COLS,
+            data=rows,
+            sort_action="native",
+            page_size=30,
+            style_header=_HDR,
+            style_data=_DAT,
+            style_data_conditional=_PORTFOLIO_COND,
+            style_cell={
+                "textAlign": "center", "padding": "5px 12px",
+                "fontFamily": "monospace", "fontSize": "0.85rem",
+            },
+            style_cell_conditional=[
+                {"if": {"column_id": "代碼"}, "textAlign": "left"},
+            ],
+            style_table={"overflowX": "auto"},
+        )
+        return status, [
+            dbc.Alert(
+                f"🚀 {len(rows)} 隻命中策略，按平均每筆%降序排列",
+                color="warning", className="mb-3",
+            ),
+            html.H6("📊 全倉掃描排行榜", className="mb-2"),
+            table,
+        ]
+
+    # ── 📊 單股回測 ──────────────────────────────────────────────────
     trades, equity_df, m, df, err = _run(
         strategy, ticker, period, trade_size,
         slippage, stop_loss, take_profit, max_hold,
@@ -405,7 +578,6 @@ def cb_run_backtest(n_clicks, strategy, ticker, period,
                      "#26a69a" if m["Profit Factor"] >= 1.5 else "white"),
     ], className="mb-3 g-2")
 
-    # 次要指標
     sub_cards = dbc.Row([
         _metric_card("平均盈利%",    f"{m['平均盈利%']:+.2f}%", "#26a69a"),
         _metric_card("平均虧損%",    f"{m['平均虧損%']:+.2f}%", "#ef5350"),
@@ -421,6 +593,13 @@ def cb_run_backtest(n_clicks, strategy, ticker, period,
     equity_section = html.Div([
         html.H6("📈 資金曲線（含持有不動基準）", className="mt-2 mb-1"),
         dcc.Graph(figure=equity_fig, config={"displayModeBar": False}),
+    ], className="mb-3")
+
+    # ── K 線交易標記圖 ────────────────────────────────────────────────
+    trade_chart_fig = _trade_chart(df, trades)
+    trade_chart_section = html.Div([
+        html.H6("🕯️ K 線交易標記（▲買入  ▼賣出）", className="mb-1"),
+        dcc.Graph(figure=trade_chart_fig, config={"displayModeBar": False}),
     ], className="mb-3")
 
     # ── 月度熱力圖 ───────────────────────────────────────────────────
@@ -461,4 +640,8 @@ def cb_run_backtest(n_clicks, strategy, ticker, period,
         f"MIN{min_hold}日"
     )
 
-    return status, [cards, sub_cards, equity_section, heatmap_section, trade_table]
+    return status, [
+        cards, sub_cards,
+        equity_section, trade_chart_section,
+        heatmap_section, trade_table,
+    ]

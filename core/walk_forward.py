@@ -18,6 +18,11 @@ import plotly.graph_objects as go
 from indicators import calculate_indicators, precompute_signals
 from backtest import run_backtest, calc_bt_metrics, build_hsi_filter
 
+try:
+    import streamlit as st
+except ImportError:
+    st = None
+
 
 # ══════════════════════════════════════════════════════════════════
 # 🔴-1 V18: _merge_buy_sigs 自動對齊長度

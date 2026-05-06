@@ -11,11 +11,10 @@ from datetime import datetime
 from dash import html, dcc, callback, Output, Input, State, no_update, ctx
 import dash_bootstrap_components as dbc
 
-from data import get_stock_data, load_stocks, fetch_stocks_from_tradingview
-from indicators import calculate_indicators
+from data import load_stocks, fetch_stocks_from_tradingview, batch_download
 import cache_store
 
-BATCH_SIZE  = 3
+BATCH_SIZE  = 10
 INTERVAL_MS = 2_000
 DISK_TTL    = 86_400   # 24 小時
 
@@ -28,13 +27,10 @@ _STOCKS_TXT = os.path.join(
 
 # ── 工具函式 ──────────────────────────────────────────────────────────
 def _download_batch(tickers: list, period: str) -> int:
+    results = batch_download(tickers, period)
     saved = 0
-    for ticker in tickers:
+    for ticker, df in results.items():
         try:
-            raw = get_stock_data(ticker, period)
-            if raw.empty or len(raw) < 62:
-                continue
-            df = calculate_indicators(raw)
             cache_store.dc.set(f"stock_{ticker}_{period}", df, expire=DISK_TTL)
             saved += 1
         except Exception:
