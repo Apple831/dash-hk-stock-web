@@ -15,9 +15,19 @@ dash.register_page(__name__, path="/regime-matrix", name="制度矩陣")
 # ── Constants ─────────────────────────────────────────────────────
 ACTIVE_NAMES       = list(ACTIVE_PRESETS.keys())
 ALL_STRATEGY_OPTS  = [{"label": n, "value": n} for n in STRATEGY_PRESETS]
-REGIMES            = ["🟢 牛市", "🟡 震盪市", "🔴 熊市"]
-REG_IDS            = {"🟢 牛市": "bull", "🟡 震盪市": "side", "🔴 熊市": "bear"}
-REG_HIDDEN         = {"🟢 牛市": "_br",  "🟡 震盪市": "_sr",  "🔴 熊市": "_er"}
+REGIMES = ["強牛市", "弱牛市", "牛市警惕", "熊市觀察", "弱熊市", "強熊市", "震盪市", "轉折期"]
+REG_IDS = {r: f"r{i+1}" for i, r in enumerate(REGIMES)}
+REG_HIDDEN = {r: f"_h{i+1}" for i, r in enumerate(REGIMES)}
+REGIME_DISPLAY = {
+    "強牛市":  "🟢 強牛市",
+    "弱牛市":  "🟢 弱牛市",
+    "牛市警惕": "⚠️ 牛市警惕",
+    "熊市觀察": "⚠️ 熊市觀察",
+    "弱熊市":  "🔴 弱熊市",
+    "強熊市":  "🔴 強熊市",
+    "震盪市":  "🟡 震盪市",
+    "轉折期":  "🔵 轉折期",
+}
 
 # yfinance only supports 5y / 10y (not "3y") so map accordingly
 YF_PERIOD = {"3y": "5y", "5y": "5y", "10y": "10y"}
@@ -44,11 +54,12 @@ _CELL_LEFT = {**_CELL, "textAlign": "left"}
 
 def _fold_regime(hsi_df: pd.DataFrame, oos_start_date) -> str:
     if hsi_df is None or hsi_df.empty:
-        return "🟡 震盪市"
+        return "震盪市"
     idx      = hsi_df.index.searchsorted(oos_start_date)
     idx      = min(max(0, idx), len(hsi_df) - 1)
     slice_df = hsi_df.iloc[: idx + 1]
-    return detect_regime(slice_df)["bucket"]
+    label    = detect_regime(slice_df)["label"]
+    return label if label in REGIMES else "震盪市"
 
 
 def _aggregate_by_regime(wf_results: list, hsi_df: pd.DataFrame) -> dict:
@@ -145,36 +156,29 @@ def _run_strategy(name, preset, stock_data, hsi_df, is_mo, oos_mo, trade_size, s
 # ══════════════════════════════════════════════════════════════════
 
 def _build_matrix_table(srm: dict):
-    """srm = {strategy_name: {regime: metrics_or_None}}"""
-    columns = [
-        {"name": "策略",     "id": "策略",  "type": "text"},
-        {"name": "🟢 牛市",  "id": "bull",  "type": "text"},
-        {"name": "🟡 震盪市","id": "side",  "type": "text"},
-        {"name": "🔴 熊市",  "id": "bear",  "type": "text"},
-    ]
+    """srm = {strategy_name: {regime_label: metrics_or_None}}"""
+    columns = [{"name": "策略", "id": "策略", "type": "text"}]
+    for r in REGIMES:
+        columns.append({"name": REGIME_DISPLAY[r], "id": REG_IDS[r], "type": "text"})
+
     rows   = []
     styles = []
 
     for i, (name, rd) in enumerate(srm.items()):
-        br = (rd.get("🟢 牛市") or {}).get("avg_ret")
-        sr = (rd.get("🟡 震盪市") or {}).get("avg_ret")
-        er = (rd.get("🔴 熊市") or {}).get("avg_ret")
-        rows.append({
-            "策略": name,
-            "bull": _fmt_cell(rd.get("🟢 牛市")),
-            "side": _fmt_cell(rd.get("🟡 震盪市")),
-            "bear": _fmt_cell(rd.get("🔴 熊市")),
-            "_br": br, "_sr": sr, "_er": er,
-        })
-        for col_id, val in [("bull", br), ("side", sr), ("bear", er)]:
-            if val is None:
-                continue
-            if val > 0:
-                styles.append({"if": {"row_index": i, "column_id": col_id},
-                                "backgroundColor": "#0d2b0d", "color": "#6fcf6f"})
-            elif val < 0:
-                styles.append({"if": {"row_index": i, "column_id": col_id},
-                                "backgroundColor": "#2b0d0d", "color": "#cf6f6f"})
+        row = {"策略": name}
+        for r in REGIMES:
+            rid  = REG_IDS[r]
+            hid  = REG_HIDDEN[r]
+            m    = rd.get(r)
+            val  = (m or {}).get("avg_ret")
+            row[rid] = _fmt_cell(m)
+            row[hid] = val
+            if val is not None:
+                clr_bg = "#0d2b0d" if val > 0 else "#2b0d0d"
+                clr_fg = "#6fcf6f" if val > 0 else "#cf6f6f"
+                styles.append({"if": {"row_index": i, "column_id": rid},
+                                "backgroundColor": clr_bg, "color": clr_fg})
+        rows.append(row)
 
     return columns, rows, styles
 
@@ -205,10 +209,10 @@ def _build_summary_table(srm: dict):
     for regime in REGIMES:
         if regime not in best:
             continue
-        b = best[regime]
+        b    = best[regime]
         sign = "+" if b["avg_ret"] > 0 else ""
         rows.append({
-            "制度":  regime,
+            "制度":  REGIME_DISPLAY.get(regime, regime),
             "策略":  b["策略"],
             "ret":   f"{sign}{b['avg_ret']:.2f}%",
             "wr":    f"{b['win_rate']:.1f}%",
@@ -226,7 +230,7 @@ def _build_custom_chart(strategy_name: str, rd: dict) -> go.Figure:
     x, y, colors, texts = [], [], [], []
     for regime in REGIMES:
         m = rd.get(regime)
-        x.append(regime)
+        x.append(REGIME_DISPLAY.get(regime, regime))
         if m is None:
             y.append(0); colors.append("#555"); texts.append("無數據")
         else:
@@ -429,10 +433,8 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
             style_data=_DAT,
             style_cell=_CELL,
             style_cell_conditional=[
-                {"if": {"column_id": "策略"}, **_CELL_LEFT, "minWidth": "280px", "maxWidth": "380px"},
-                {"if": {"column_id": "bull"}, "minWidth": "140px"},
-                {"if": {"column_id": "side"}, "minWidth": "140px"},
-                {"if": {"column_id": "bear"}, "minWidth": "140px"},
+                {"if": {"column_id": "策略"}, **_CELL_LEFT, "minWidth": "260px", "maxWidth": "360px"},
+                *[{"if": {"column_id": REG_IDS[r]}, "minWidth": "115px"} for r in REGIMES],
             ],
             style_data_conditional=mat_styles,
             style_as_list_view=False,
@@ -493,9 +495,9 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
                 html.Small(f"{m['n']} 筆交易 · 勝率 {m['win_rate']:.1f}% · {m['folds']} 個Fold"),
             ])
         return dbc.Col(dbc.Card(dbc.CardBody([
-            html.Div(regime, className="small text-muted mb-1"),
+            html.Div(REGIME_DISPLAY.get(regime, regime), className="small text-muted mb-1"),
             body,
-        ], className="py-2 px-3")), xs=12, md=4, className="mb-2")
+        ], className="py-2 px-3")), xs=6, md=3, className="mb-2")
 
     return [
         dbc.Alert(f"✅ {strategy}  |  {len(stock_data)} 隻股票  |  IS={is_mo}月 OOS={oos_mo}月",

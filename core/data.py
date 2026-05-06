@@ -42,15 +42,18 @@ def _cache_set(key: str, val) -> None:
 
 # ── 股票清單 ───────────────────────────────────────────────────────
 def load_stocks_from_file() -> list:
-    stocks_path = os.path.join(os.path.dirname(__file__), "stocks.txt")
-    if os.path.exists(stocks_path):
-        stocks = [
-            line.split("#")[0].strip()
-            for line in open(stocks_path, "r", encoding="utf-8")
-            if ".HK" in line
-        ]
-        if stocks:
-            return stocks
+    base = os.path.dirname(os.path.abspath(__file__))
+    # Check project root first (written by TradingView updater), then core/
+    for stocks_path in [os.path.join(os.path.dirname(base), "stocks.txt"),
+                        os.path.join(base, "stocks.txt")]:
+        if os.path.exists(stocks_path):
+            stocks = [
+                line.split("#")[0].strip()
+                for line in open(stocks_path, "r", encoding="utf-8")
+                if ".HK" in line
+            ]
+            if stocks:
+                return stocks
     return ["0700.HK", "9988.HK", "3690.HK"]
 
 
@@ -237,5 +240,11 @@ def get_cached(ticker: str, period: str = "1y") -> pd.DataFrame:
 
     df = get_stock_data(ticker, period)
     if not df.empty:
-        return calculate_indicators(df)
+        result = calculate_indicators(df)
+        try:
+            import cache_store
+            cache_store.dc.set(disk_key, result, expire=86_400)
+        except Exception:
+            pass
+        return result
     return pd.DataFrame()

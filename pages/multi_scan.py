@@ -5,28 +5,13 @@ from collections import defaultdict
 
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
-from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS
+from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS, REGIME_RECOMMENDATIONS
 from regime import detect_regime
 
 dash.register_page(__name__, path="/multi-scan", name="共振掃描")
 
-# ── 制度 → 推薦策略對照表 ─────────────────────────────────────────────
-_REGIME_RECS = {
-    "🟢 牛市": [
-        "⚡ 突破確認",
-        "🔄+ MACD+趨勢MIN30",
-    ],
-    "🟡 震盪市": [
-        "💎+s2 M30 三重出場版【實盤冠軍】",
-        "💎+ M30 RSI進雙出MIN30",
-        "💎M30 純粹均值回歸MIN30",
-        "🔄🔄M30 均值回歸長持MIN30",
-    ],
-    "🔴 熊市": [
-        "💎+s2 M30 三重出場版【實盤冠軍】",
-        "💎M30 純粹均值回歸MIN30",
-    ],
-}
+_REGIME_RECS      = REGIME_RECOMMENDATIONS
+_BEAR_LABELS      = {"弱熊市", "強熊市"}
 
 # ── Table 樣式（和其他 scan 頁一致）──────────────────────────────────
 _HDR  = {"backgroundColor": "#1a1a1a", "color": "#fff",
@@ -88,16 +73,17 @@ _SELL_COLS = [
 
 # ── 恒指制度偵測 ──────────────────────────────────────────────────────
 def _detect_regime() -> tuple[str, list]:
-    """Returns (bucket_label, card_components) — bucket matches _REGIME_RECS keys."""
+    """Returns (label, card_components) — label matches _REGIME_RECS keys."""
     raw = get_stock_data("^HSI", "1y")
     if raw.empty:
-        return "🟡 震盪市", [dbc.Alert("⚠️ 無法獲取恒指數據，預設震盪市策略", color="warning")]
+        return "震盪市", [dbc.Alert("⚠️ 無法獲取恒指數據，預設震盪市策略", color="warning")]
 
     df  = calculate_indicators(raw)
     reg = detect_regime(df)
 
     pct_color = "#26a69a" if (reg["pct"] or 0) >= 0 else "#ef5350"
-    recs      = _REGIME_RECS.get(reg["bucket"], [])
+    recs      = _REGIME_RECS.get(reg["label"], [])
+    is_bear   = reg["label"] in _BEAR_LABELS
 
     def _fmt(val, fmt):
         return fmt.format(val) if val is not None else "—"
@@ -124,13 +110,26 @@ def _detect_regime() -> tuple[str, list]:
                 ], md=5),
                 dbc.Col([
                     html.Small("🎯 推薦策略", className="text-muted d-block fw-bold mb-1"),
-                    *[html.Small(f"• {r}", className="d-block") for r in recs],
+                    *(
+                        [html.Small("⛔ 實盤禁區，無推薦策略", className="d-block text-danger fw-bold")]
+                        if is_bear else
+                        [html.Small(f"• {r}", className="d-block") for r in recs]
+                    ),
                 ], md=7),
             ]),
         ]),
     ], className="mb-3 border-secondary")
 
-    return reg["bucket"], [card]
+    components = [card]
+    if is_bear:
+        components.append(
+            dbc.Alert(
+                f"⛔ 實盤禁區：當前制度為「{reg['label']}」，嚴禁實盤買入，請等待制度改變。",
+                color="danger",
+                className="mt-1",
+            )
+        )
+    return reg["label"], components
 
 
 # ── 買入共振掃描 ──────────────────────────────────────────────────────
@@ -402,6 +401,14 @@ def cb_buy_scan(n_clicks, regime_label, lookback):
 
     recs = _REGIME_RECS.get(regime_label, list(ACTIVE_PRESETS.keys()))
     if not recs:
+        if regime_label in _BEAR_LABELS:
+            return (
+                f"⛔ 實盤禁區：{regime_label} 禁止掃描買入",
+                [dbc.Alert(
+                    f"⛔ 實盤禁區：當前制度「{regime_label}」嚴禁實盤買入，共振掃描已停用。",
+                    color="danger",
+                )],
+            )
         return "⚠️ 無推薦策略", []
 
     results, status = _resonance_scan(recs, lookback)

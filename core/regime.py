@@ -39,23 +39,23 @@ def detect_regime(df: pd.DataFrame) -> dict:
 
     if abs(ma_gap_pct) < 2.0:
         if cov_20 > 2.0:
-            label, bucket, color = "🟡 震盪市", "🟡 震盪市", "warning"
+            label, bucket, color = "震盪市",  "🟡 震盪市", "warning"
         else:
-            label, bucket, color = "🔵 轉折期", "🟡 震盪市", "info"
+            label, bucket, color = "轉折期",  "🟡 震盪市", "info"
     elif ma_gap_pct > 2.0:
         if macd_pct > 0.5:
-            label, bucket, color = "🟢 強牛市", "🟢 牛市", "success"
+            label, bucket, color = "強牛市",  "🟢 牛市", "success"
         elif macd_pct > 0:
-            label, bucket, color = "🟢 弱牛市", "🟢 牛市", "success"
+            label, bucket, color = "弱牛市",  "🟢 牛市", "success"
         else:
-            label, bucket, color = "⚠️ 牛市警惕", "🟢 牛市", "warning"
+            label, bucket, color = "牛市警惕","🟢 牛市", "warning"
     else:
         if macd_pct < -0.5:
-            label, bucket, color = "🔴 強熊市", "🔴 熊市", "danger"
+            label, bucket, color = "強熊市",  "🔴 熊市", "danger"
         elif macd_pct < 0:
-            label, bucket, color = "🔴 弱熊市", "🔴 熊市", "danger"
+            label, bucket, color = "弱熊市",  "🔴 熊市", "danger"
         else:
-            label, bucket, color = "⚠️ 熊市觀察", "🔴 熊市", "warning"
+            label, bucket, color = "熊市觀察","🔴 熊市", "warning"
 
     prev_close = float(p["Close"])
     pct = (close / prev_close - 1) * 100 if prev_close != 0 else 0.0

@@ -19,10 +19,10 @@ BATCH_SIZE  = 3
 INTERVAL_MS = 2_000
 DISK_TTL    = 86_400   # 24 小時
 
-# stocks.txt 路徑（components/ 的上層是 project root，再進 core/）
+# stocks.txt 路徑（components/ 的上層是 project root）
 _STOCKS_TXT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "core", "stocks.txt",
+    "stocks.txt",
 )
 
 
