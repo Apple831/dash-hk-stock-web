@@ -112,4 +112,4 @@ def update_regime_banner(_):
 
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(debug=False, threaded=True)

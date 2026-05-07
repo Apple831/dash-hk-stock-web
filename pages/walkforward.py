@@ -358,18 +358,24 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
 
 
 def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage):
+    import traceback
+    short = job_id[:8]
+    print(f"[WF] Thread start  job={short} mode={mode} ticker={ticker}")
     try:
         def progress_cb(fold, total_folds, current):
             if job_id in _WF_JOBS:
                 _WF_JOBS[job_id]["fold"]        = fold
                 _WF_JOBS[job_id]["total_folds"] = total_folds
                 _WF_JOBS[job_id]["current"]     = current or ""
+                print(f"[WF] Progress  job={short} fold={fold}/{total_folds} cur={current}")
 
         wf_results, is_portfolio, err = _run_wf(
             mode, strategy, ticker, total_period,
             is_mo, oos_mo, trade_size, slippage,
             progress_cb=progress_cb,
         )
+        n = len(wf_results) if wf_results else 0
+        print(f"[WF] Thread done   job={short} results={n} err={err}")
         _WF_JOBS[job_id] = {
             "status":       "done",
             "result":       wf_results,
@@ -384,6 +390,7 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
             },
         }
     except Exception as e:
+        print(f"[WF] Thread ERROR  job={short}: {e}\n{traceback.format_exc()}")
         _WF_JOBS[job_id] = {
             "status": "done", "result": None,
             "is_portfolio": False,
@@ -516,6 +523,7 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
               is_mo, oos_mo, trade_size, slippage):
     job_id = str(uuid.uuid4())
     _WF_JOBS[job_id] = {"status": "running", "fold": 0, "total_folds": 0, "current": "初始化..."}
+    print(f"[WF] cb_run_wf    job={job_id[:8]} mode={mode} ticker={ticker} strategy={strategy}")
 
     threading.Thread(
         target=_run_wf_thread,
@@ -541,9 +549,19 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
     State("wf-job-store",          "data"),
     prevent_initial_call=True,
 )
-def cb_poll_progress(_, job_id):
-    if not job_id or job_id not in _WF_JOBS:
+def cb_poll_progress(n_intervals, job_id):
+    short = (job_id[:8] + "...") if job_id else "None"
+    in_jobs = job_id in _WF_JOBS if job_id else False
+    print(f"[WF] cb_poll       n={n_intervals} job={short} in_jobs={in_jobs} total_jobs={len(_WF_JOBS)}")
+
+    if not job_id:
+        # no active job at all → stop interval
         return no_update, True, no_update, no_update
+
+    if job_id not in _WF_JOBS:
+        # job not registered yet (race condition) → keep polling, do NOT stop
+        print(f"[WF] cb_poll       job={short} not found yet, keep polling")
+        return no_update, False, no_update, no_update
 
     job = _WF_JOBS[job_id]
 
@@ -567,6 +585,7 @@ def cb_poll_progress(_, job_id):
         return progress_ui, False, "⏳ 驗證進行中...", no_update
 
     # ── 完成 ──────────────────────────────────────────────────────────
+    print(f"[WF] cb_poll DONE  job={short}, rendering results")
     job_data     = _WF_JOBS.pop(job_id, {})
     wf_results   = job_data.get("result")
     is_portfolio = job_data.get("is_portfolio", False)
@@ -626,6 +645,8 @@ def cb_poll_progress(_, job_id):
         return done_bar, True, status_str, [*verdict, bar_section, deg_section, oos_section, fold_section]
 
     except Exception as e:
+        import traceback
+        print(f"[WF] cb_poll RENDER ERROR: {e}\n{traceback.format_exc()}")
         return [], True, str(e), dbc.Alert(
             [html.Strong("❌ 結果渲染失敗"), html.Br(), html.Code(str(e))],
             color="danger", className="mt-2",
