@@ -1,7 +1,14 @@
 # 港股狙擊手 Dash 版 — Claude Code 工作手冊
+## 當前狀態（2026-05-07）
+- Dash 版本已部署：https://hk-stock-sniper.onrender.com
+- 所有 9 個 page 完成
+- Phase 1-3 修復完成
+- Free plan（會休眠，升 Starter $7/月 才不休眠）
 
-## 專案背景
-從 Streamlit V18 遷移到 Dash。核心業務邏輯在 core/ 目錄，不要改動邏輯。
+## 待辦
+- 測試線上版本每個 page 功能是否正常
+- 確認批量下載在線上可以用
+- 考慮升級 Starter plan 避免休眠
 
 ## 技術棧
 - Dash 2.18 + dash-bootstrap-components 1.6
