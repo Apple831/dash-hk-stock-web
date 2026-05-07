@@ -1,8 +1,13 @@
+import uuid
+import threading
+
 import dash
 from dash import html, dcc, dash_table, callback, Output, Input, State, no_update
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
+
+_WF_JOBS: dict = {}  # job_id → {status, fold, total_folds, current, result, ...}
 
 from data import get_cached, load_stocks
 from indicators import calculate_indicators
@@ -288,7 +293,7 @@ def _fold_table(rows: list) -> dash_table.DataTable:
 
 
 # ── 數據載入 + WF 執行 ────────────────────────────────────────────────
-def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui):
+def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui, progress_cb=None):
     preset = STRATEGY_PRESETS.get(strategy)
     if not preset:
         return None, False, "⚠️ 找不到策略"
@@ -320,6 +325,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 trade_size=ts, slippage=slip,
                 min_hold_days=min_hold,
                 cooldown_days=cooldown,
+                progress_cb=progress_cb,
             )
         except Exception as e:
             return None, False, f"❌ WF 失敗：{str(e)[:80]}"
@@ -344,10 +350,45 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 trade_size=ts, slippage=slip,
                 min_hold_days=min_hold,
                 cooldown_days=cooldown,
+                progress_cb=progress_cb,
             )
         except Exception as e:
             return None, True, f"❌ 投資組合 WF 失敗：{str(e)[:80]}"
         return results, True, None
+
+
+def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage):
+    try:
+        def progress_cb(fold, total_folds, current):
+            if job_id in _WF_JOBS:
+                _WF_JOBS[job_id]["fold"]        = fold
+                _WF_JOBS[job_id]["total_folds"] = total_folds
+                _WF_JOBS[job_id]["current"]     = current or ""
+
+        wf_results, is_portfolio, err = _run_wf(
+            mode, strategy, ticker, total_period,
+            is_mo, oos_mo, trade_size, slippage,
+            progress_cb=progress_cb,
+        )
+        _WF_JOBS[job_id] = {
+            "status":       "done",
+            "result":       wf_results,
+            "is_portfolio": is_portfolio,
+            "error":        err,
+            "params": {
+                "strategy":   strategy,
+                "ticker":     ticker or "0700.HK",
+                "is_mo":      is_mo,
+                "oos_mo":     oos_mo,
+                "trade_size": trade_size,
+            },
+        }
+    except Exception as e:
+        _WF_JOBS[job_id] = {
+            "status": "done", "result": None,
+            "is_portfolio": False,
+            "error": f"❌ 執行失敗：{e}", "params": {},
+        }
 
 
 # ── Layout ───────────────────────────────────────────────────────────
@@ -425,11 +466,13 @@ layout = html.Div([
         ),
     ], className="mb-3"),
 
-    html.Small(id="wf-status", className="text-muted d-block mb-3"),
+    html.Small(id="wf-status", className="text-muted d-block mb-2"),
 
-    dcc.Loading(type="circle", color="#ce93d8", children=[
-        html.Div(id="wf-result"),
-    ]),
+    dcc.Store(id="wf-job-store", data=None),
+    dcc.Interval(id="wf-progress-interval", interval=800, n_intervals=0, disabled=True),
+    html.Div(id="wf-progress-section", className="mb-3"),
+
+    html.Div(id="wf-result"),
 ], className="p-3")
 
 
@@ -451,33 +494,95 @@ def cb_mode_change(mode):
     return {}, PERIOD_OPTIONS, {"display": "none"}
 
 
-# ── Callback：開始驗證 ────────────────────────────────────────────────
+# ── Callback：開始驗證（啟動 thread）────────────────────────────────
 @callback(
-    Output("wf-status", "children"),
-    Output("wf-result", "children"),
-    Input("wf-btn",           "n_clicks"),
-    State("wf-strategy",      "value"),
-    State("wf-mode",          "value"),
-    State("wf-ticker",        "value"),
-    State("wf-total-period",  "value"),
-    State("wf-is-mo",         "value"),
-    State("wf-oos-mo",        "value"),
-    State("wf-trade-size",    "value"),
-    State("wf-slippage",      "value"),
+    Output("wf-status",            "children"),
+    Output("wf-result",            "children"),
+    Output("wf-job-store",         "data"),
+    Output("wf-progress-interval", "disabled"),
+    Output("wf-progress-section",  "children"),
+    Input("wf-btn",                "n_clicks"),
+    State("wf-strategy",           "value"),
+    State("wf-mode",               "value"),
+    State("wf-ticker",             "value"),
+    State("wf-total-period",       "value"),
+    State("wf-is-mo",              "value"),
+    State("wf-oos-mo",             "value"),
+    State("wf-trade-size",         "value"),
+    State("wf-slippage",           "value"),
     prevent_initial_call=True,
 )
 def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
               is_mo, oos_mo, trade_size, slippage):
+    job_id = str(uuid.uuid4())
+    _WF_JOBS[job_id] = {"status": "running", "fold": 0, "total_folds": 0, "current": "初始化..."}
 
-    wf_results, is_portfolio, err = _run_wf(
-        mode, strategy, ticker, total_period,
-        is_mo, oos_mo, trade_size, slippage,
-    )
+    threading.Thread(
+        target=_run_wf_thread,
+        args=(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage),
+        daemon=True,
+    ).start()
+
+    init_bar = html.Div([
+        html.Small("🔬 初始化資料中...", className="text-muted mb-1 d-block"),
+        dbc.Progress(value=2, striped=True, animated=True,
+                     color="info", style={"height": "22px"}),
+    ])
+    return "⏳ 驗證進行中...", [], job_id, False, init_bar
+
+
+# ── Callback：輪詢進度 ────────────────────────────────────────────────
+@callback(
+    Output("wf-progress-section",  "children",  allow_duplicate=True),
+    Output("wf-progress-interval", "disabled",  allow_duplicate=True),
+    Output("wf-status",            "children",  allow_duplicate=True),
+    Output("wf-result",            "children",  allow_duplicate=True),
+    Input("wf-progress-interval",  "n_intervals"),
+    State("wf-job-store",          "data"),
+    prevent_initial_call=True,
+)
+def cb_poll_progress(_, job_id):
+    if not job_id or job_id not in _WF_JOBS:
+        return no_update, True, no_update, no_update
+
+    job = _WF_JOBS[job_id]
+
+    if job["status"] == "running":
+        fold    = job.get("fold", 0)
+        total   = job.get("total_folds", 0)
+        current = job.get("current", "初始化...")
+        pct     = max(2, int(fold / total * 100)) if total > 0 else 2
+
+        if total > 0 and fold > 0:
+            label_text = f"正在跑 Fold {fold}/{total}" + (f"，處理 {current}..." if current else "...")
+        else:
+            label_text = f"初始化資料中... {current}" if current else "初始化資料中..."
+
+        progress_ui = html.Div([
+            html.Small(label_text, className="text-muted mb-1 d-block"),
+            dbc.Progress(value=pct, label=f"{pct}%" if pct > 5 else "",
+                         striped=True, animated=True,
+                         color="info", style={"height": "22px"}),
+        ])
+        return progress_ui, False, "⏳ 驗證進行中...", no_update
+
+    # ── 完成 ──────────────────────────────────────────────────────────
+    job_data     = _WF_JOBS.pop(job_id, {})
+    wf_results   = job_data.get("result")
+    is_portfolio = job_data.get("is_portfolio", False)
+    err          = job_data.get("error")
+    params       = job_data.get("params", {})
+    strategy     = params.get("strategy", "")
+    ticker       = params.get("ticker", "0700.HK")
+    is_mo        = params.get("is_mo", 12)
+    oos_mo       = params.get("oos_mo", 6)
+    trade_size   = params.get("trade_size", 100_000)
+
     if err:
-        return err, dbc.Alert(err, color="warning", className="mt-2")
+        return [], True, err, dbc.Alert(err, color="warning", className="mt-2")
     if not wf_results:
         msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
-        return msg, dbc.Alert(msg, color="warning", className="mt-2")
+        return [], True, msg, dbc.Alert(msg, color="warning", className="mt-2")
 
     try:
         rows     = _build_rows(wf_results)
@@ -489,47 +594,39 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
 
         if not rows:
             msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
-            return msg, dbc.Alert(msg, color="warning", className="mt-2")
+            return [], True, msg, dbc.Alert(msg, color="warning", className="mt-2")
 
-        # ── 整體評分 + 5 指標 ─────────────────────────────────────────────
-        verdict = _verdict_section(rows, is_portfolio)
-
-        # ── IS vs OOS 對比圖 ──────────────────────────────────────────────
+        verdict    = _verdict_section(rows, is_portfolio)
         bar_section = html.Div([
             html.H6("📊 IS vs OOS 平均每筆回報%", className="mb-1"),
             dcc.Graph(figure=_bar_chart(rows), config={"displayModeBar": False}),
         ], className="mb-3")
-
-        # ── 退化率趨勢圖 ─────────────────────────────────────────────────
         deg_section = html.Div([
             html.H6("📉 退化率趨勢（灰=無效 Fold／IS≈0）", className="mb-1"),
             dcc.Graph(figure=_deg_chart(rows), config={"displayModeBar": False}),
         ], className="mb-3")
-
-        # ── OOS 拼接資金曲線 ──────────────────────────────────────────────
         oos_section = html.Div([
             html.H6("📈 OOS 拼接資金曲線（僅有效 Fold）", className="mb-1"),
             dcc.Graph(figure=_oos_equity_chart(wf_results, ts),
                       config={"displayModeBar": False}),
         ], className="mb-3")
-
-        # ── 逐 Fold 詳細數據 ──────────────────────────────────────────────
         fold_section = html.Div([
             html.H6(f"📑 逐 Fold 詳細數據（共 {n_folds} 個 Fold）", className="mb-1"),
             _fold_table(rows),
         ], className="mb-3")
 
-        status = (
+        status_str = (
             f"✅ {mode_lbl} | {strategy} | "
-            f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | "
-            f"{n_folds} 個 Fold"
+            f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | {n_folds} 個 Fold"
         )
-        return status, [*verdict, bar_section, deg_section, oos_section, fold_section]
+        done_bar = html.Div([
+            html.Small(f"✅ 驗證完成：{n_folds} 個 Fold", className="text-success mb-1 d-block"),
+            dbc.Progress(value=100, color="success", style={"height": "22px"}),
+        ])
+        return done_bar, True, status_str, [*verdict, bar_section, deg_section, oos_section, fold_section]
 
     except Exception as e:
-        import traceback
-        err_msg = f"❌ 結果渲染失敗：{e}\n{traceback.format_exc()}"
-        return str(e), dbc.Alert(
+        return [], True, str(e), dbc.Alert(
             [html.Strong("❌ 結果渲染失敗"), html.Br(), html.Code(str(e))],
             color="danger", className="mt-2",
         )

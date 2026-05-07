@@ -137,6 +137,7 @@ def run_walk_forward(
     hsi_filter: pd.Series = None,
     extra_buy_sigs: tuple = None,
     track_extended: bool = True,
+    progress_cb=None,            # callable(fold, total_folds, info_str) or None
 ) -> list:
     if df.empty or len(df) < 60:
         return []
@@ -153,13 +154,14 @@ def run_walk_forward(
             kw["cooldown_days"] = cooldown_days
         return kw
 
-    results    = []
-    total_days = len(df)
-    is_days    = int(is_months  * 21)
-    oos_days   = int(oos_months * 21)
-    step       = oos_days
-    fold       = 1
-    start      = 0
+    results     = []
+    total_days  = len(df)
+    is_days     = int(is_months  * 21)
+    oos_days    = int(oos_months * 21)
+    step        = oos_days
+    fold        = 1
+    start       = 0
+    total_folds = max(1, (total_days - is_days) // oos_days)
 
     while start + is_days + oos_days <= total_days:
         is_df  = df.iloc[start : start + is_days].copy()
@@ -254,6 +256,8 @@ def run_walk_forward(
             "extended_count":      len(oos_extended_trades),
             "n_stocks":            1,
         })
+        if progress_cb:
+            progress_cb(fold, total_folds, "")
 
         start += step
         fold  += 1
@@ -301,6 +305,7 @@ def run_portfolio_walk_forward(
     hsi_filter: pd.Series = None,
     extra_buy_sigs: tuple = None,
     track_extended: bool = True,
+    progress_cb=None,            # callable(fold, total_folds, ticker_str) or None
 ) -> list:
     if not stock_data:
         return []
@@ -344,6 +349,8 @@ def run_portfolio_walk_forward(
         n_stocks_run        = 0
 
         for ticker, full_df in stock_data.items():
+            if progress_cb:
+                progress_cb(fold, n_total_folds, ticker)
             if full_df is None or full_df.empty or len(full_df) < 62:
                 continue
 
