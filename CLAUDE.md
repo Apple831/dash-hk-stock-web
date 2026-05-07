@@ -41,3 +41,4 @@ my-hk-stock-web-dash/
 - core/ 的檔案要移除 streamlit import，改用 flask_caching
 - config.py 永遠用整個重寫，不用 str.replace
 - 制度標籤用「震盪市」不是「震盪」
+- focus on testing the reality of the backtest and walk-forward data, also improve the strategy that will be used on real-trading.
