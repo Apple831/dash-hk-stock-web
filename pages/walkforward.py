@@ -393,7 +393,7 @@ layout = html.Div([
         dbc.Col([
             html.Label("股票代碼（單股）", className="small text-muted mb-1 d-block"),
             dbc.Input(id="wf-ticker", value="0700.HK", type="text", size="sm"),
-        ], xs=6, md=2, className="mb-2"),
+        ], id="wf-ticker-col", xs=6, md=2, className="mb-2"),
 
         dbc.Col([
             html.Label("總數據週期", className="small text-muted mb-1 d-block"),
@@ -435,10 +435,10 @@ layout = html.Div([
 
 # ── Callback：模式切換 → 股票輸入框 ──────────────────────────────────
 @callback(
-    Output("wf-ticker",       "disabled"),
-    Output("wf-total-period", "options"),
-    Output("wf-portfolio-hint", "style"),
-    Input("wf-mode",          "value"),
+    Output("wf-ticker-col",    "style"),
+    Output("wf-total-period",  "options"),
+    Output("wf-portfolio-hint","style"),
+    Input("wf-mode",           "value"),
 )
 def cb_mode_change(mode):
     if mode == "portfolio":
@@ -447,8 +447,8 @@ def cb_mode_change(mode):
             {"label": "3年（緩存）", "value": "3y"},
             {"label": "5年（緩存）", "value": "5y"},
         ]
-        return True, portfolio_opts, {}
-    return False, PERIOD_OPTIONS, {"display": "none"}
+        return {"display": "none"}, portfolio_opts, {}
+    return {}, PERIOD_OPTIONS, {"display": "none"}
 
 
 # ── Callback：開始驗證 ────────────────────────────────────────────────
@@ -474,48 +474,62 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
         is_mo, oos_mo, trade_size, slippage,
     )
     if err:
-        return err, []
+        return err, dbc.Alert(err, color="warning", className="mt-2")
     if not wf_results:
-        return "⚠️ 沒有足夠數據完成 Walk-Forward（縮短 IS/OOS 窗口或選擇更長週期）", []
+        msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
+        return msg, dbc.Alert(msg, color="warning", className="mt-2")
 
-    rows     = _build_rows(wf_results)
-    ts       = float(trade_size or 100_000)
-    is_mo_v  = int(is_mo  or 12)
-    oos_mo_v = int(oos_mo or 6)
-    n_folds  = len(rows)
-    mode_lbl = "投資組合" if is_portfolio else (ticker or "0700.HK").strip().upper()
+    try:
+        rows     = _build_rows(wf_results)
+        ts       = float(trade_size or 100_000)
+        is_mo_v  = int(is_mo  or 12)
+        oos_mo_v = int(oos_mo or 6)
+        n_folds  = len(rows)
+        mode_lbl = "投資組合" if is_portfolio else (ticker or "0700.HK").strip().upper()
 
-    # ── 整體評分 + 5 指標 ─────────────────────────────────────────────
-    verdict = _verdict_section(rows, is_portfolio)
+        if not rows:
+            msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
+            return msg, dbc.Alert(msg, color="warning", className="mt-2")
 
-    # ── IS vs OOS 對比圖 ──────────────────────────────────────────────
-    bar_section = html.Div([
-        html.H6("📊 IS vs OOS 平均每筆回報%", className="mb-1"),
-        dcc.Graph(figure=_bar_chart(rows), config={"displayModeBar": False}),
-    ], className="mb-3")
+        # ── 整體評分 + 5 指標 ─────────────────────────────────────────────
+        verdict = _verdict_section(rows, is_portfolio)
 
-    # ── 退化率趨勢圖 ─────────────────────────────────────────────────
-    deg_section = html.Div([
-        html.H6("📉 退化率趨勢（灰=無效 Fold／IS≈0）", className="mb-1"),
-        dcc.Graph(figure=_deg_chart(rows), config={"displayModeBar": False}),
-    ], className="mb-3")
+        # ── IS vs OOS 對比圖 ──────────────────────────────────────────────
+        bar_section = html.Div([
+            html.H6("📊 IS vs OOS 平均每筆回報%", className="mb-1"),
+            dcc.Graph(figure=_bar_chart(rows), config={"displayModeBar": False}),
+        ], className="mb-3")
 
-    # ── OOS 拼接資金曲線 ──────────────────────────────────────────────
-    oos_section = html.Div([
-        html.H6("📈 OOS 拼接資金曲線（僅有效 Fold）", className="mb-1"),
-        dcc.Graph(figure=_oos_equity_chart(wf_results, ts),
-                  config={"displayModeBar": False}),
-    ], className="mb-3")
+        # ── 退化率趨勢圖 ─────────────────────────────────────────────────
+        deg_section = html.Div([
+            html.H6("📉 退化率趨勢（灰=無效 Fold／IS≈0）", className="mb-1"),
+            dcc.Graph(figure=_deg_chart(rows), config={"displayModeBar": False}),
+        ], className="mb-3")
 
-    # ── 逐 Fold 詳細數據 ──────────────────────────────────────────────
-    fold_section = html.Div([
-        html.H6(f"📑 逐 Fold 詳細數據（共 {n_folds} 個 Fold）", className="mb-1"),
-        _fold_table(rows),
-    ], className="mb-3")
+        # ── OOS 拼接資金曲線 ──────────────────────────────────────────────
+        oos_section = html.Div([
+            html.H6("📈 OOS 拼接資金曲線（僅有效 Fold）", className="mb-1"),
+            dcc.Graph(figure=_oos_equity_chart(wf_results, ts),
+                      config={"displayModeBar": False}),
+        ], className="mb-3")
 
-    status = (
-        f"✅ {mode_lbl} | {strategy} | "
-        f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | "
-        f"{n_folds} 個 Fold"
-    )
-    return status, [*verdict, bar_section, deg_section, oos_section, fold_section]
+        # ── 逐 Fold 詳細數據 ──────────────────────────────────────────────
+        fold_section = html.Div([
+            html.H6(f"📑 逐 Fold 詳細數據（共 {n_folds} 個 Fold）", className="mb-1"),
+            _fold_table(rows),
+        ], className="mb-3")
+
+        status = (
+            f"✅ {mode_lbl} | {strategy} | "
+            f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | "
+            f"{n_folds} 個 Fold"
+        )
+        return status, [*verdict, bar_section, deg_section, oos_section, fold_section]
+
+    except Exception as e:
+        import traceback
+        err_msg = f"❌ 結果渲染失敗：{e}\n{traceback.format_exc()}"
+        return str(e), dbc.Alert(
+            [html.Strong("❌ 結果渲染失敗"), html.Br(), html.Code(str(e))],
+            color="danger", className="mt-2",
+        )
