@@ -154,11 +154,197 @@ layout = html.Div([
         color="#26a69a",
         children=html.Div(id="mc-results"),
     ),
+
+    html.Hr(className="my-4", style={"borderColor": "#333"}),
+
+    # ══════════════════════════════════════════════════════════════
+    # 📖 結果判讀手冊（可摺疊）
+    # ══════════════════════════════════════════════════════════════
+    dbc.Button(
+        "📖 結果判讀手冊　▾",
+        id="mc-guide-toggle",
+        color="secondary",
+        outline=True,
+        size="sm",
+        className="mb-3",
+        style={"fontSize": "0.85rem"},
+    ),
+    dbc.Collapse(
+        id="mc-guide-collapse",
+        is_open=True,   # 預設展開
+        children=dbc.Card(
+            dbc.CardBody([
+
+                # ── 破產概率 ──────────────────────────────────────
+                html.H6("💀 破產概率（最終資金 < 50%）",
+                        className="mt-1 mb-2", style={"color": "#ef5350"}),
+                dbc.Table([
+                    html.Thead(html.Tr([
+                        html.Th("數值"),
+                        html.Th("判讀"),
+                    ]), style={"backgroundColor": "#1a1a1a"}),
+                    html.Tbody([
+                        html.Tr([html.Td("< 5%",   style={"color": "#26a69a", "fontWeight": "bold"}),
+                                 html.Td("✅ 優秀——策略在絕大多數運氣組合下都能保住資金")]),
+                        html.Tr([html.Td("5–15%",  style={"color": "#f9a825", "fontWeight": "bold"}),
+                                 html.Td("⚠️ 可接受，但要注意倉位管理")]),
+                        html.Tr([html.Td("> 15%",  style={"color": "#ef5350", "fontWeight": "bold"}),
+                                 html.Td("🔴 危險——每 6–7 次就可能腰斬，不建議實盤")]),
+                    ]),
+                ], bordered=True, size="sm", dark=True, className="mb-3"),
+
+                # ── 虧損概率 ──────────────────────────────────────
+                html.H6("📉 虧損概率（最終資金 < 初始）",
+                        className="mb-2", style={"color": "#f9a825"}),
+                dbc.Table([
+                    html.Thead(html.Tr([html.Th("數值"), html.Th("判讀")]),
+                               style={"backgroundColor": "#1a1a1a"}),
+                    html.Tbody([
+                        html.Tr([html.Td("< 20%",  style={"color": "#26a69a", "fontWeight": "bold"}),
+                                 html.Td("✅ 策略勝算高，80% 的運氣排列都能賺錢")]),
+                        html.Tr([html.Td("20–40%", style={"color": "#f9a825", "fontWeight": "bold"}),
+                                 html.Td("⚠️ 中性——策略有效但需要耐心等待正回報")]),
+                        html.Tr([html.Td("> 40%",  style={"color": "#ef5350", "fontWeight": "bold"}),
+                                 html.Td("🔴 邊緣策略，接近擲硬幣，不宜大倉位")]),
+                    ]),
+                ], bordered=True, size="sm", dark=True, className="mb-3"),
+
+                # ── 中位最終資金 ──────────────────────────────────
+                html.H6("⚖️ 中位最終資金（最重要的數字）",
+                        className="mb-2", style={"color": "#26a69a"}),
+                dbc.Alert([
+                    html.Div("代表「一般運氣」下的結果，是評估策略優劣最核心的指標。",
+                             className="small mb-2"),
+                    html.Div([
+                        html.Span("明顯高於初始資金", style={"color": "#26a69a", "fontWeight": "bold"}),
+                        html.Span(" → ✅ 策略有正期望值", className="ms-2"),
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Span("略高於初始資金", style={"color": "#f9a825", "fontWeight": "bold"}),
+                        html.Span(" → ⚠️ 策略勉強有效，邊際策略", className="ms-2"),
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Span("低於初始資金", style={"color": "#ef5350", "fontWeight": "bold"}),
+                        html.Span(" → 🔴 即使一般運氣也虧損，策略本身有問題", className="ms-2"),
+                    ], className="small"),
+                ], color="dark", className="mb-3 py-2 px-3"),
+
+                # ── VaR ───────────────────────────────────────────
+                html.H6("🔻 5% VaR（最壞 5% 情境的最終資金）",
+                        className="mb-2", style={"color": "#f9a825"}),
+                dbc.Table([
+                    html.Thead(html.Tr([html.Th("狀況"), html.Th("判讀")]),
+                               style={"backgroundColor": "#1a1a1a"}),
+                    html.Tbody([
+                        html.Tr([html.Td("VaR > 初始 × 70%", style={"color": "#26a69a", "fontWeight": "bold"}),
+                                 html.Td("✅ 尾部風險可控，最差情況最多虧 30%")]),
+                        html.Tr([html.Td("VaR 在 50–70%",    style={"color": "#f9a825", "fontWeight": "bold"}),
+                                 html.Td("⚠️ 尾部風險偏大，考慮縮小倉位")]),
+                        html.Tr([html.Td("VaR < 50%",        style={"color": "#ef5350", "fontWeight": "bold"}),
+                                 html.Td("🔴 極端情況會觸及破產線，必須加止損")]),
+                    ]),
+                ], bordered=True, size="sm", dark=True, className="mb-3"),
+
+                # ── 最大回撤 ──────────────────────────────────────
+                html.H6("📊 中位最大回撤",
+                        className="mb-2", style={"color": "#ef5350"}),
+                dbc.Table([
+                    html.Thead(html.Tr([html.Th("數值"), html.Th("判讀")]),
+                               style={"backgroundColor": "#1a1a1a"}),
+                    html.Tbody([
+                        html.Tr([html.Td("< 15%",  style={"color": "#26a69a", "fontWeight": "bold"}),
+                                 html.Td("✅ 很舒適，心理壓力低，容易持倉")]),
+                        html.Tr([html.Td("15–30%", style={"color": "#f9a825", "fontWeight": "bold"}),
+                                 html.Td("⚠️ 可接受，實盤時要有心理準備不要底部出場")]),
+                        html.Tr([html.Td("> 30%",  style={"color": "#ef5350", "fontWeight": "bold"}),
+                                 html.Td("🔴 回撤很大，容易恐慌出場，需要嚴格止損設定")]),
+                    ]),
+                ], bordered=True, size="sm", dark=True, className="mb-3"),
+
+                # ── 曲線圖解讀 ────────────────────────────────────
+                html.H6("📈 模擬曲線圖怎麼看", className="mb-2"),
+                dbc.Table([
+                    html.Thead(html.Tr([html.Th("觀察"), html.Th("代表意思")]),
+                               style={"backgroundColor": "#1a1a1a"}),
+                    html.Tbody([
+                        html.Tr([html.Td("5%–95% 帶很窄"),  html.Td("✅ 策略結果穩定，不太依賴運氣")]),
+                        html.Tr([html.Td("5%–95% 帶很寬"),  html.Td("⚠️ 運氣成分大，結果差異懸殊")]),
+                        html.Tr([html.Td("中位數向右上傾"), html.Td("✅ 策略長期有正期望值")]),
+                        html.Tr([html.Td("中位數向右下傾"), html.Td("🔴 策略長期虧損，不可用")]),
+                        html.Tr([html.Td("大量曲線跌破破產線"), html.Td("🔴 策略存在嚴重尾部風險")]),
+                    ]),
+                ], bordered=True, size="sm", dark=True, className="mb-3"),
+
+                # ── 百分位表 ──────────────────────────────────────
+                html.H6("📋 百分位分析表怎麼看", className="mb-2"),
+                dbc.Alert([
+                    html.Div("重點看 P25 和 P75，這是「一般偏差運氣」的範圍：", className="small mb-2"),
+                    html.Div("P25 仍為正回報 → ✅ 策略非常穩健，偏差運氣也能賺",
+                             className="small mb-1", style={"color": "#26a69a"}),
+                    html.Div("P50 正但 P25 負 → ⚠️ 策略有效但需要相對好的運氣",
+                             className="small mb-1", style={"color": "#f9a825"}),
+                    html.Div("P50 都為負 → 🔴 策略根本性有問題",
+                             className="small", style={"color": "#ef5350"}),
+                ], color="dark", className="mb-3 py-2 px-3"),
+
+                # ── Sharpe ────────────────────────────────────────
+                html.H6("🧮 中位 Sharpe", className="mb-2"),
+                dbc.Table([
+                    html.Thead(html.Tr([html.Th("數值"), html.Th("判讀")]),
+                               style={"backgroundColor": "#1a1a1a"}),
+                    html.Tbody([
+                        html.Tr([html.Td("> 0.5",      style={"color": "#26a69a", "fontWeight": "bold"}),
+                                 html.Td("✅ 每單位波動帶來不錯的回報")]),
+                        html.Tr([html.Td("0.1 – 0.5",  style={"color": "#f9a825", "fontWeight": "bold"}),
+                                 html.Td("⚠️ 可接受")]),
+                        html.Tr([html.Td("< 0.1 或負值", style={"color": "#ef5350", "fontWeight": "bold"}),
+                                 html.Td("🔴 回報不足以補償波動風險")]),
+                    ]),
+                ], bordered=True, size="sm", dark=True, className="mb-3"),
+
+                # ── WF 關係說明 ───────────────────────────────────
+                html.H6("🔬 Monte Carlo vs Walk-Forward 的關係", className="mb-2"),
+                dbc.Alert([
+                    html.Div([
+                        html.Strong("Walk-Forward"),
+                        html.Span("：測試策略在「未見過的真實時間段」是否有效 → 消除過擬合", className="ms-1"),
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Strong("Monte Carlo"),
+                        html.Span("：假設策略有效的前提下，測試「不同運氣排列」的風險分布 → 評估倉位風險", className="ms-1"),
+                    ], className="small mb-2"),
+                    html.Div(
+                        "✅ 正確順序：先用 Walk-Forward 確認有真實 Alpha，再用 Monte Carlo 決定實盤倉位大小。",
+                        className="small fw-bold",
+                        style={"color": "#26a69a"},
+                    ),
+                ], color="dark", className="mb-0 py-2 px-3"),
+
+            ], className="py-3 px-4"),
+            style={"backgroundColor": "#1e1e1e", "border": "1px solid #333"},
+        ),
+    ),
 ], className="p-3")
 
 
 # ══════════════════════════════════════════════════════════════════
-# Callback
+# Callback：判讀手冊摺疊
+# ══════════════════════════════════════════════════════════════════
+@callback(
+    Output("mc-guide-collapse", "is_open"),
+    Output("mc-guide-toggle",   "children"),
+    Input("mc-guide-toggle",    "n_clicks"),
+    State("mc-guide-collapse",  "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_guide(n, is_open):
+    new_open = not is_open
+    label = "📖 結果判讀手冊　▴" if new_open else "📖 結果判讀手冊　▾"
+    return new_open, label
+
+
+# ══════════════════════════════════════════════════════════════════
+# Callback：執行模擬
 # ══════════════════════════════════════════════════════════════════
 @callback(
     Output("mc-status",  "children"),
