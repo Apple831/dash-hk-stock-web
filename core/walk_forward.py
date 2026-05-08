@@ -288,6 +288,21 @@ def _build_portfolio_equity(
     return pd.DataFrame(eq_rows).set_index("date")
 
 
+def _apply_max_positions(trades: list, max_pos: int) -> list:
+    """Per-buy-date cap: on any given day keep only the first max_pos new entries (alphabetically)."""
+    if not max_pos or max_pos <= 0:
+        return trades
+    from collections import defaultdict
+    by_date: dict = defaultdict(list)
+    for t in trades:
+        by_date[t["_buy_date"]].append(t)
+    result = []
+    for date in sorted(by_date):
+        day_trades = sorted(by_date[date], key=lambda t: t.get("ticker", ""))
+        result.extend(day_trades[:max_pos])
+    return result
+
+
 def run_portfolio_walk_forward(
     stock_data: dict,
     buy_sigs: tuple,
@@ -300,7 +315,8 @@ def run_portfolio_walk_forward(
     take_profit_pct: float = None,
     max_hold_days: int = None,
     min_hold_days: int = None,
-    cooldown_days: int = None,   # 🔴-2 V18 透傳
+    cooldown_days: int = None,          # 🔴-2 V18 透傳
+    max_concurrent_positions: int = None,  # 🟡-7 同時持倉上限（None=不限）
     min_oos_trades: int = 5,
     hsi_filter: pd.Series = None,
     extra_buy_sigs: tuple = None,
@@ -420,6 +436,9 @@ def run_portfolio_walk_forward(
 
         is_date_range  = ref_df.index[(ref_df.index >= is_start_date)  & (ref_df.index <= is_end_date)]
         oos_date_range = ref_df.index[(ref_df.index >= oos_start_date) & (ref_df.index <= oos_end_date)]
+
+        if max_concurrent_positions:
+            all_oos_trades = _apply_max_positions(all_oos_trades, max_concurrent_positions)
 
         oos_strategy_trades, oos_forced_trades = _split_oos_trades(all_oos_trades)
 

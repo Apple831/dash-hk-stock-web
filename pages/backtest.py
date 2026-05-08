@@ -7,7 +7,7 @@ import pandas as pd
 
 from data import get_cached, load_stocks
 from backtest import run_backtest, calc_bt_metrics
-from config import STRATEGY_PRESETS, BUY_LABELS, SELL_LABELS, PRESET_CUSTOM
+from config import STRATEGY_PRESETS, BUY_LABELS, SELL_LABELS, PRESET_CUSTOM, MIN_BARS_FOR_INDICATORS
 
 dash.register_page(__name__, path="/backtest", name="回測")
 
@@ -331,7 +331,7 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
     df = get_cached(ticker, period)
     if df.empty:
         return None, None, None, None, f"❌ 無法獲取 {ticker} 數據"
-    if len(df) < 62:
+    if len(df) < MIN_BARS_FOR_INDICATORS:
         return None, None, None, None, f"⚠️ {ticker} 數據不足（{len(df)} 根K線）"
 
     try:

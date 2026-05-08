@@ -269,3 +269,15 @@ TV_HEADERS = {
     "Origin":  "https://www.tradingview.com",
     "Referer": "https://www.tradingview.com/",
 }
+
+# ── 系統常數 ────────────────────────────────────────────────────────────────
+MIN_BARS_FOR_INDICATORS = 62        # MA60 + 2 根 warmup
+
+REGIME_HISTORY_BARS = 120           # banner 最多回看天數
+
+# Walk-Forward 評估門檻（上次人工調整後確認的數值，勿輕易修改）
+WF_ROBUST_MAX_DEGRADATION   = 40.0  # % 退化率 < 40 = 健康
+WF_ROBUST_MIN_OOS_POS_RATE  = 60.0  # % OOS 正回報 fold 比率
+WF_WARNING_MAX_DEGRADATION  = 65.0  # %
+WF_WARNING_MIN_OOS_POS_RATE = 50.0  # %
+WF_MIN_IS_RETURN_FOR_CALC   = 0.5   # % IS 絕對值 < 0.5 不計退化率

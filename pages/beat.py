@@ -109,8 +109,12 @@ def _scan(period: str) -> tuple[float | None, str, list]:
                 "恒指升幅%": round(hsi_ret,   2),
                 "超額回報%": round(excess,     2),
             })
-        except Exception:
+        except Exception as e:
             errors += 1
+            import traceback
+            print(f"[SCAN][{ticker}] {type(e).__name__}: {e}")
+            if not isinstance(e, (ConnectionError, TimeoutError, ValueError)):
+                traceback.print_exc()
 
     results.sort(key=lambda x: x["超額回報%"], reverse=True)
 
@@ -145,7 +149,12 @@ layout = html.Div([
                        color="warning", size="sm", className="w-100"),
             md=2, sm=6, className="mb-2",
         ),
-    ], align="center", className="mb-3"),
+    ], align="center", className="mb-1"),
+    html.Small(
+        "⚠️ 首次使用請先點 Navbar 的「⬇️ 下載數據」",
+        className="text-warning d-block mb-2",
+        style={"fontSize": "0.8rem"},
+    ),
 
     html.Small(id="beat-status", className="text-muted d-block mb-2"),
 

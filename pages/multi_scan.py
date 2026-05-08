@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
-from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS, REGIME_RECOMMENDATIONS
+from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS, REGIME_RECOMMENDATIONS, MIN_BARS_FOR_INDICATORS
 from regime import detect_regime
 
 dash.register_page(__name__, path="/multi-scan", name="共振掃描")
@@ -171,7 +171,7 @@ def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list,
     for ticker in tickers:
         try:
             df = get_cached(ticker, "1y")
-            if df.empty or len(df) < 62:
+            if df.empty or len(df) < MIN_BARS_FOR_INDICATORS:
                 continue
             sigs = precompute_signals(df)
 
@@ -204,15 +204,20 @@ def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list,
                 "命中策略": " | ".join(hit),
                 "觸發時間": _day_label(min(hit_days)),
             })
-        except Exception:
+        except Exception as e:
             errors += 1
+            import traceback
+            print(f"[SCAN][{ticker}] {type(e).__name__}: {e}")
+            if not isinstance(e, (ConnectionError, TimeoutError, ValueError)):
+                traceback.print_exc()
 
     results.sort(key=lambda x: (-x["共振數"], -x["RSI"]))
 
     n, total = len(results), len(tickers)
     err_note = f"，{errors} 隻略過" if errors else ""
+    no_hit_hint = "  ｜  提示：若從未下載過，請先點 Navbar「⬇️ 下載數據」"
     status   = (f"✅ 共振掃描完成：{total} 隻中命中 {n} 隻{err_note}"
-                if n else f"🔍 無共振：{total} 隻均未命中{err_note}")
+                if n else f"🔍 無共振：{total} 隻均未命中{err_note}{no_hit_hint}")
     return results, status
 
 
@@ -273,7 +278,7 @@ def _sell_alert(tickers: list, lookback_days: int = 1) -> tuple[list, str]:
     for ticker in tickers:
         try:
             df = get_cached(ticker, "1y")
-            if df.empty or len(df) < 62:
+            if df.empty or len(df) < MIN_BARS_FOR_INDICATORS:
                 errors += 1
                 results.append({
                     "代碼": ticker, "現價": "—", "漲跌%": "—",
@@ -358,7 +363,12 @@ layout = html.Div([
                            color="success", size="sm"),
                 width="auto",
             ),
-        ], align="center", className="mb-2 g-2"),
+        ], align="center", className="mb-1 g-2"),
+        html.Small(
+            "⚠️ 首次使用請先點 Navbar 的「⬇️ 下載數據」",
+            className="text-warning d-block mb-2",
+            style={"fontSize": "0.8rem"},
+        ),
         html.Small(id="mscan-buy-status", className="text-muted d-block mb-2"),
         dcc.Loading(type="circle", color="#26a69a", children=[
             html.Div(id="mscan-buy-result"),

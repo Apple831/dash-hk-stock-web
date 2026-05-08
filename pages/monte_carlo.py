@@ -15,7 +15,7 @@ import pandas as pd
 
 from data import get_cached
 from backtest import run_backtest, calc_bt_metrics
-from config import STRATEGY_PRESETS
+from config import STRATEGY_PRESETS, MIN_BARS_FOR_INDICATORS
 
 dash.register_page(__name__, path="/monte-carlo", name="🎲 Monte Carlo")
 
@@ -380,7 +380,7 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, n_sim):
     df = get_cached(ticker, period)
     if df.empty:
         return f"❌ 無法獲取 {ticker} 數據", []
-    if len(df) < 62:
+    if len(df) < MIN_BARS_FOR_INDICATORS:
         return f"⚠️ {ticker} 數據不足（{len(df)} K線）", []
 
     try:

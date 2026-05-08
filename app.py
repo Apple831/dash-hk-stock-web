@@ -9,6 +9,7 @@ from dash import html, dcc, callback, Output, Input
 from components import downloader   # 注冊 callbacks
 from data import get_cached
 from regime import regime_history
+from config import REGIME_HISTORY_BARS
 
 app = dash.Dash(
     __name__,
@@ -89,7 +90,7 @@ def update_regime_banner(_):
 
         # 一次向量化計算最近 120 bar 的制度序列；
         # 當前制度 = hist[-1]，回看找出本段持續長度。
-        hist = regime_history(df, n_bars=120)
+        hist = regime_history(df, n_bars=REGIME_HISTORY_BARS)
         if not hist:
             raise ValueError("insufficient data")
 

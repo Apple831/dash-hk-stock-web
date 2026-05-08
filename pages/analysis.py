@@ -8,6 +8,7 @@ import pandas as pd
 from data import get_cached
 from indicators import calculate_indicators
 from signals import evaluate_signals
+from config import MIN_BARS_FOR_INDICATORS
 
 dash.register_page(__name__, path="/analysis", name="個股分析")
 
@@ -115,9 +116,9 @@ def _build_result(ticker: str, period: str):
     df = get_cached(ticker, period)
     if df.empty:
         return f"❌ 無法獲取 {ticker} 的數據，請確認代碼格式（如 0700.HK）", []
-    if len(df) < 62:
+    if len(df) < MIN_BARS_FOR_INDICATORS:
         return (
-            f"⚠️ {ticker} 在 {period} 週期內數據不足（{len(df)} 根K線，需至少 62 根），"
+            f"⚠️ {ticker} 在 {period} 週期內數據不足（{len(df)} 根K線，需至少 {MIN_BARS_FOR_INDICATORS} 根），"
             "請選擇更長週期",
             [],
         )

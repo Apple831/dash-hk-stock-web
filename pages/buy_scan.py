@@ -9,7 +9,7 @@ from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
 from signals import signal_strength_score
 from regime import detect_regime
-from config import STRATEGY_PRESETS, BUY_LABELS, PRESET_CUSTOM
+from config import STRATEGY_PRESETS, BUY_LABELS, PRESET_CUSTOM, MIN_BARS_FOR_INDICATORS
 
 dash.register_page(__name__, path="/buy-scan", name="買入掃描")
 
@@ -128,7 +128,7 @@ def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
     for ticker in tickers:
         try:
             df = get_cached(ticker, "1y")
-            if df.empty or len(df) < 62:
+            if df.empty or len(df) < MIN_BARS_FOR_INDICATORS:
                 continue
             sigs = precompute_signals(df)
 
@@ -157,8 +157,12 @@ def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
                 "評分":    score,
                 "命中信號": hit_label,
             })
-        except Exception:
+        except Exception as e:
             errors += 1
+            import traceback
+            print(f"[SCAN][{ticker}] {type(e).__name__}: {e}")
+            if not isinstance(e, (ConnectionError, TimeoutError, ValueError)):
+                traceback.print_exc()
 
     results.sort(key=lambda x: x["評分"], reverse=True)
 
@@ -167,7 +171,7 @@ def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
     if n:
         status = f"✅ 完成：{total} 隻中命中 {n} 隻{err_note}"
     else:
-        status = f"🔍 完成：{total} 隻中沒有命中「{strategy_name}」{err_note}"
+        status = f"🔍 完成：{total} 隻中沒有命中「{strategy_name}」{err_note}  ｜  提示：若從未下載過，請先點 Navbar「⬇️ 下載數據」"
     return results, status
 
 
@@ -291,7 +295,12 @@ layout = html.Div([
                        color="success", className="w-100"),
             md=2, sm=8,
         ),
-    ], align="center", className="mb-3"),
+    ], align="center", className="mb-1"),
+    html.Small(
+        "⚠️ 首次使用請先點 Navbar 的「⬇️ 下載數據」",
+        className="text-warning d-block mb-3",
+        style={"fontSize": "0.8rem"},
+    ),
 
     # 自定義買入訊號面板
     html.Div(

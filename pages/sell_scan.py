@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
-from config import STRATEGY_PRESETS, SELL_LABELS, PRESET_CUSTOM
+from config import STRATEGY_PRESETS, SELL_LABELS, PRESET_CUSTOM, MIN_BARS_FOR_INDICATORS
 
 dash.register_page(__name__, path="/sell-scan", name="賣出掃描")
 
@@ -73,7 +73,7 @@ def _scan(strategy_name: str, custom_sell: list = None) -> tuple[list, str]:
     for ticker in tickers:
         try:
             df = get_cached(ticker, "1y")
-            if df.empty or len(df) < 62:
+            if df.empty or len(df) < MIN_BARS_FOR_INDICATORS:
                 continue
             sigs = precompute_signals(df)
 
@@ -94,8 +94,12 @@ def _scan(strategy_name: str, custom_sell: list = None) -> tuple[list, str]:
                 "訊號數": n_hit,
                 "命中訊號": hit_label,
             })
-        except Exception:
+        except Exception as e:
             errors += 1
+            import traceback
+            print(f"[SCAN][{ticker}] {type(e).__name__}: {e}")
+            if not isinstance(e, (ConnectionError, TimeoutError, ValueError)):
+                traceback.print_exc()
 
     results.sort(key=lambda x: (-x["訊號數"], -x["RSI"]))
 
@@ -185,7 +189,12 @@ layout = html.Div([
                        color="danger", className="w-100"),
             md=2, sm=12,
         ),
-    ], align="center", className="mb-3"),
+    ], align="center", className="mb-1"),
+    html.Small(
+        "⚠️ 首次使用請先點 Navbar 的「⬇️ 下載數據」",
+        className="text-warning d-block mb-3",
+        style={"fontSize": "0.8rem"},
+    ),
 
     # 自定義賣出訊號面板（選「✏️ 自定義」時顯示）
     html.Div(

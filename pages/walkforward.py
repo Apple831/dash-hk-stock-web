@@ -1,5 +1,6 @@
 import uuid
 import threading
+import time
 
 import dash
 from dash import html, dcc, dash_table, callback, Output, Input, State, no_update
@@ -7,12 +8,21 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
 
-_WF_JOBS: dict = {}  # job_id → {status, fold, total_folds, current, result, ...}
+# ⚠️ _WF_JOBS 是 in-process 存儲。gunicorn 多 worker 時需改用 diskcache。
+# 目前 Procfile 只有 1 worker，暫時安全。升級前必須先重構。
+_WF_JOBS: dict = {}  # job_id → {status, fold, total_folds, current, result, created_at, ...}
+_WF_JOBS_LOCK = threading.Lock()
 
 from data import get_cached, load_stocks
 from indicators import calculate_indicators
 from walk_forward import run_walk_forward, run_portfolio_walk_forward
-from config import STRATEGY_PRESETS
+from config import (
+    STRATEGY_PRESETS,
+    MIN_BARS_FOR_INDICATORS,
+    WF_ROBUST_MAX_DEGRADATION, WF_ROBUST_MIN_OOS_POS_RATE,
+    WF_WARNING_MAX_DEGRADATION, WF_WARNING_MIN_OOS_POS_RATE,
+    WF_MIN_IS_RETURN_FOR_CALC,
+)
 
 dash.register_page(__name__, path="/walkforward", name="Walk-Forward")
 
@@ -47,9 +57,20 @@ FOLD_COLS = [
 ]
 
 
+# ── 殭屍 job 清理 ────────────────────────────────────────────────────
+def _cleanup_stale_jobs(max_age: int = 1800) -> None:
+    now = time.time()
+    with _WF_JOBS_LOCK:
+        stale = [jid for jid, j in _WF_JOBS.items()
+                 if now - j.get("created_at", now) > max_age]
+        for jid in stale:
+            print(f"[WF] cleanup stale job={jid[:8]}")
+            _WF_JOBS.pop(jid, None)
+
+
 # ── 核心工具函式 ──────────────────────────────────────────────────────
 def _degradation(is_ret: float, oos_ret: float):
-    if abs(is_ret) < 0.5:
+    if abs(is_ret) < WF_MIN_IS_RETURN_FOR_CALC:
         return None
     return (is_ret - oos_ret) / abs(is_ret) * 100
 
@@ -82,7 +103,7 @@ def _build_rows(wf_results: list) -> list:
 
 
 # ── 評估 & 元件建構 ───────────────────────────────────────────────────
-def _verdict_section(rows: list, is_portfolio: bool) -> list:
+def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0) -> list:
     valid_rows = [r for r in rows if r["_valid_oos"] and r["_deg_raw"] is not None]
     if not valid_rows:
         return [dbc.Alert("❌ 所有 Fold 均未達標，無法評估策略。", color="danger")]
@@ -94,10 +115,10 @@ def _verdict_section(rows: list, is_portfolio: bool) -> list:
     oos_pos  = sum(1 for r in valid_rows if r["OOS 均回報%"] > 0)
     oos_rate = oos_pos / len(valid_rows) * 100
 
-    if avg_oos > 0 and avg_deg < 40 and oos_rate >= 60:
+    if avg_oos > 0 and avg_deg < WF_ROBUST_MAX_DEGRADATION and oos_rate >= WF_ROBUST_MIN_OOS_POS_RATE:
         verdict, v_color = "🟢 策略穩健（具備真實 Alpha）", "success"
-        detail = f"OOS 正回報比率 {oos_rate:.0f}%，退化率 {avg_deg:.1f}% < 40%，策略很可能在實盤有效"
-    elif avg_oos > 0 and avg_deg < 65 and oos_rate >= 50:
+        detail = f"OOS 正回報比率 {oos_rate:.0f}%，退化率 {avg_deg:.1f}% < {WF_ROBUST_MAX_DEGRADATION:.0f}%，策略很可能在實盤有效"
+    elif avg_oos > 0 and avg_deg < WF_WARNING_MAX_DEGRADATION and oos_rate >= WF_WARNING_MIN_OOS_POS_RATE:
         verdict, v_color = "🟡 輕度過擬合", "warning"
         detail = f"OOS 仍有正回報但退化率 {avg_deg:.1f}% 偏高，建議加入更嚴格條件或延長驗證期"
     elif avg_oos <= 0:
@@ -108,7 +129,7 @@ def _verdict_section(rows: list, is_portfolio: bool) -> list:
         detail = f"退化率 {avg_deg:.1f}% 過高，IS 回報無法在 OOS 重現"
 
     mode_lbl  = "（投資組合）" if is_portfolio else "（單股）"
-    deg_color = "#26a69a" if avg_deg < 40 else ("#f9a825" if avg_deg < 65 else "#ef5350")
+    deg_color = "#26a69a" if avg_deg < WF_ROBUST_MAX_DEGRADATION else ("#f9a825" if avg_deg < WF_WARNING_MAX_DEGRADATION else "#ef5350")
 
     def _mc(label, value, color="white"):
         return dbc.Col(dbc.Card(dbc.CardBody([
@@ -116,6 +137,11 @@ def _verdict_section(rows: list, is_portfolio: bool) -> list:
             html.Div(value, className="fw-bold",
                      style={"color": color, "fontSize": "1.0rem"}),
         ], className="py-2 px-3")), xs=6, md=2, className="mb-2")
+
+    capital_note = html.Small(
+        f"⚠️ 投資組合回測假設{'無限資金' if not max_pos else f'最多 {max_pos} 隻同時持倉'}",
+        className="text-muted",
+    ) if is_portfolio else None
 
     return [
         dbc.Alert([
@@ -134,6 +160,7 @@ def _verdict_section(rows: list, is_portfolio: bool) -> list:
             _mc("OOS 正回報 Fold", f"{oos_pos}/{len(valid_rows)}"),
             _mc("有效 Fold",       f"{len(valid_rows)}/{len(rows)}"),
         ], className="g-2 mb-3"),
+        *([capital_note] if capital_note else []),
     ]
 
 
@@ -194,10 +221,14 @@ def _deg_chart(rows: list) -> go.Figure:
             ],
         ),
     ))
-    fig.add_hline(y=40, line_dash="dot", line_color="rgba(38,166,154,0.5)",
-                  annotation_text="40% 健康線", annotation_position="right")
-    fig.add_hline(y=65, line_dash="dot", line_color="rgba(239,83,80,0.5)",
-                  annotation_text="65% 警戒線", annotation_position="right")
+    fig.add_hline(y=WF_ROBUST_MAX_DEGRADATION, line_dash="dot",
+                  line_color="rgba(38,166,154,0.5)",
+                  annotation_text=f"{WF_ROBUST_MAX_DEGRADATION:.0f}% 健康線",
+                  annotation_position="right")
+    fig.add_hline(y=WF_WARNING_MAX_DEGRADATION, line_dash="dot",
+                  line_color="rgba(239,83,80,0.5)",
+                  annotation_text=f"{WF_WARNING_MAX_DEGRADATION:.0f}% 警戒線",
+                  annotation_position="right")
     fig.update_layout(
         height=280, margin=dict(t=20, b=20),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -274,7 +305,7 @@ def _fold_table(rows: list) -> dash_table.DataTable:
         d = r["_deg_raw"]
         if d is None:
             continue
-        c = "#26a69a" if d < 40 else ("#f9a825" if d < 65 else "#ef5350")
+        c = "#26a69a" if d < WF_ROBUST_MAX_DEGRADATION else ("#f9a825" if d < WF_WARNING_MAX_DEGRADATION else "#ef5350")
         cond.append({"if": {"row_index": i, "column_id": "退化率%"},
                      "color": c, "fontWeight": "bold"})
 
@@ -293,7 +324,8 @@ def _fold_table(rows: list) -> dash_table.DataTable:
 
 
 # ── 數據載入 + WF 執行 ────────────────────────────────────────────────
-def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui, progress_cb=None):
+def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui,
+            max_positions=0, progress_cb=None):
     preset = STRATEGY_PRESETS.get(strategy)
     if not preset:
         return None, False, "⚠️ 找不到策略"
@@ -306,13 +338,14 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
     slip      = float(slippage_ui or 0.10) / 100
     is_mo     = int(is_mo  or 12)
     oos_mo    = int(oos_mo or 6)
+    max_pos   = int(max_positions or 0)
 
     if mode == "single":
         ticker_clean = (ticker or "0700.HK").strip().upper()
         df = get_cached(ticker_clean, total_period)
         if df.empty:
             return None, False, f"❌ 無法獲取 {ticker_clean} 數據"
-        min_bars = (is_mo + oos_mo) * 21 + 62
+        min_bars = (is_mo + oos_mo) * 21 + MIN_BARS_FOR_INDICATORS
         if len(df) < min_bars:
             return None, False, (
                 f"⚠️ {ticker_clean} 數據不足（{len(df)} 根K線，"
@@ -335,7 +368,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
         stock_data = {}
         for t in load_stocks():
             df_t = get_cached(t, total_period)
-            if not df_t.empty and len(df_t) >= 62:
+            if not df_t.empty and len(df_t) >= MIN_BARS_FOR_INDICATORS:
                 stock_data[t] = df_t
         if len(stock_data) < 5:
             return None, True, (
@@ -350,6 +383,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 trade_size=ts, slippage=slip,
                 min_hold_days=min_hold,
                 cooldown_days=cooldown,
+                max_concurrent_positions=max_pos if max_pos > 0 else None,
                 progress_cb=progress_cb,
             )
         except Exception as e:
@@ -357,7 +391,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
         return results, True, None
 
 
-def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage):
+def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions):
     import traceback
     short = job_id[:8]
     print(f"[WF] Thread start  job={short} mode={mode} ticker={ticker}")
@@ -372,6 +406,7 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
         wf_results, is_portfolio, err = _run_wf(
             mode, strategy, ticker, total_period,
             is_mo, oos_mo, trade_size, slippage,
+            max_positions=max_positions,
             progress_cb=progress_cb,
         )
         n = len(wf_results) if wf_results else 0
@@ -381,12 +416,14 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
             "result":       wf_results,
             "is_portfolio": is_portfolio,
             "error":        err,
+            "created_at":   _WF_JOBS.get(job_id, {}).get("created_at", time.time()),
             "params": {
-                "strategy":   strategy,
-                "ticker":     ticker or "0700.HK",
-                "is_mo":      is_mo,
-                "oos_mo":     oos_mo,
-                "trade_size": trade_size,
+                "strategy":      strategy,
+                "ticker":        ticker or "0700.HK",
+                "is_mo":         is_mo,
+                "oos_mo":        oos_mo,
+                "trade_size":    trade_size,
+                "max_positions": max_positions,
             },
         }
     except Exception as e:
@@ -395,6 +432,7 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
             "status": "done", "result": None,
             "is_portfolio": False,
             "error": f"❌ 執行失敗：{e}", "params": {},
+            "created_at": _WF_JOBS.get(job_id, {}).get("created_at", time.time()),
         }
 
 
@@ -466,6 +504,12 @@ layout = html.Div([
     dbc.Row([
         _param_col("每筆金額 (HKD)", "wf-trade-size", value=100000, step=10000),
         _param_col("純滑點%",        "wf-slippage",   value=0.10,   step=0.01, min=0),
+        dbc.Col([
+            html.Label("最大同時持倉數 (0=不限)", className="small text-muted mb-1 d-block"),
+            dbc.Input(id="wf-max-positions", type="number", size="sm",
+                      value=0, min=0, step=1),
+        ], id="wf-max-pos-col", xs=6, md=2, className="mb-2",
+           style={"display": "none"}),
         dbc.Col(
             dbc.Button("🔬 開始驗證", id="wf-btn",
                        color="primary", size="sm", className="w-100 mt-4"),
@@ -488,6 +532,7 @@ layout = html.Div([
     Output("wf-ticker-col",    "style"),
     Output("wf-total-period",  "options"),
     Output("wf-portfolio-hint","style"),
+    Output("wf-max-pos-col",   "style"),
     Input("wf-mode",           "value"),
 )
 def cb_mode_change(mode):
@@ -497,8 +542,8 @@ def cb_mode_change(mode):
             {"label": "3年（緩存）", "value": "3y"},
             {"label": "5年（緩存）", "value": "5y"},
         ]
-        return {"display": "none"}, portfolio_opts, {}
-    return {}, PERIOD_OPTIONS, {"display": "none"}
+        return {"display": "none"}, portfolio_opts, {}, {}
+    return {}, PERIOD_OPTIONS, {"display": "none"}, {"display": "none"}
 
 
 # ── Callback：開始驗證（啟動 thread）────────────────────────────────
@@ -517,17 +562,23 @@ def cb_mode_change(mode):
     State("wf-oos-mo",             "value"),
     State("wf-trade-size",         "value"),
     State("wf-slippage",           "value"),
+    State("wf-max-positions",      "value"),
     prevent_initial_call=True,
 )
 def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
-              is_mo, oos_mo, trade_size, slippage):
+              is_mo, oos_mo, trade_size, slippage, max_positions):
+    _cleanup_stale_jobs()
     job_id = str(uuid.uuid4())
-    _WF_JOBS[job_id] = {"status": "running", "fold": 0, "total_folds": 0, "current": "初始化..."}
+    _WF_JOBS[job_id] = {
+        "status": "running", "fold": 0, "total_folds": 0,
+        "current": "初始化...", "created_at": time.time(),
+    }
     print(f"[WF] cb_run_wf    job={job_id[:8]} mode={mode} ticker={ticker} strategy={strategy}")
 
     threading.Thread(
         target=_run_wf_thread,
-        args=(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage),
+        args=(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage,
+              int(max_positions or 0)),
         daemon=True,
     ).start()
 
@@ -596,6 +647,7 @@ def cb_poll_progress(n_intervals, job_id):
     is_mo        = params.get("is_mo", 12)
     oos_mo       = params.get("oos_mo", 6)
     trade_size   = params.get("trade_size", 100_000)
+    max_pos      = params.get("max_positions", 0)
 
     if err:
         return [], True, err, dbc.Alert(err, color="warning", className="mt-2")
@@ -615,7 +667,7 @@ def cb_poll_progress(n_intervals, job_id):
             msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
             return [], True, msg, dbc.Alert(msg, color="warning", className="mt-2")
 
-        verdict    = _verdict_section(rows, is_portfolio)
+        verdict    = _verdict_section(rows, is_portfolio, max_pos=max_pos)
         bar_section = html.Div([
             html.H6("📊 IS vs OOS 平均每筆回報%", className="mb-1"),
             dcc.Graph(figure=_bar_chart(rows), config={"displayModeBar": False}),
