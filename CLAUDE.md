@@ -23,14 +23,14 @@
 ## 目錄結構（目標）
 my-hk-stock-web-dash/
 ├── app.py
+├── stocks.txt          ← TradingView 更新與批量下載讀寫的同一份清單
 ├── core/               ← 已有，不改邏輯
 │   ├── backtest.py     ← V18，不動
 │   ├── indicators.py
 │   ├── signals.py
 │   ├── walk_forward.py
 │   ├── config.py
-│   ├── data.py
-│   └── stocks.txt
+│   └── data.py
 ├── pages/
 ├── components/
 ├── callbacks/

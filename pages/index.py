@@ -7,7 +7,7 @@ import pandas as pd
 
 from data import get_stock_data
 from indicators import calculate_indicators
-from regime import detect_regime
+from regime import detect_regime, regime_history
 
 dash.register_page(__name__, path="/", name="指數")
 
@@ -245,47 +245,11 @@ def _build_macdpct_chart(dfs: dict) -> go.Figure:
     return fig
 
 
-# ── 近 60 日制度序列（向量化）────────────────────────────────────────
-def _regime_series(df: pd.DataFrame) -> list[dict]:
-    if df.empty or len(df) < 62:
-        return []
-
-    recent   = df.iloc[-60:]
-    ma_gap   = (recent["MA20"] - recent["MA60"]) / recent["MA60"] * 100
-    macd_pct = recent["MACD_Hist"] / recent["Close"].replace(0, float("nan")) * 100
-    full_cov = df["Close"].rolling(20).std() / df["Close"].rolling(20).mean() * 100
-    cov_20   = full_cov.iloc[-60:]
-
-    rows = []
-    for i in range(len(recent)):
-        mg = float(ma_gap.iloc[i])   if pd.notna(ma_gap.iloc[i])   else 0.0
-        mp = float(macd_pct.iloc[i]) if pd.notna(macd_pct.iloc[i]) else 0.0
-        cv = float(cov_20.iloc[i])   if pd.notna(cov_20.iloc[i])   else 0.0
-
-        if abs(mg) < 2.0:
-            label, color = ("震盪市", "warning") if cv > 2.0 else ("轉折期", "info")
-        elif mg > 2.0:
-            if mp > 0.5:      label, color = "強牛市",  "success"
-            elif mp > 0:      label, color = "弱牛市",  "success"
-            else:             label, color = "牛市警惕","warning"
-        else:
-            if mp < -0.5:     label, color = "強熊市",  "danger"
-            elif mp < 0:      label, color = "弱熊市",  "danger"
-            else:             label, color = "熊市觀察","warning"
-
-        rows.append({
-            "date":  recent.index[i],
-            "label": label,
-            "color": color,
-        })
-    return rows
-
-
 def _build_regime_history(dfs: dict) -> list:
     sections = []
     for ticker, name in REGIME_INDICES.items():
         df  = dfs.get(ticker, pd.DataFrame())
-        rows = _regime_series(df)
+        rows = regime_history(df, n_bars=60)
         if not rows:
             sections.append(html.Small(f"{name}: 資料不足", className="text-muted d-block mb-2"))
             continue

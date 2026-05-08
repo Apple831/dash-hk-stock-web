@@ -133,6 +133,12 @@ layout = html.Div([
         ], xs=6, md=2, className="mb-2"),
 
         dbc.Col([
+            html.Label("純滑點%", className="small text-muted mb-1 d-block"),
+            dbc.Input(id="mc-slippage", value=0.10, type="number",
+                      min=0, step=0.01, size="sm"),
+        ], xs=6, md=1, className="mb-2"),
+
+        dbc.Col([
             html.Label("模擬次數", className="small text-muted mb-1 d-block"),
             dbc.Input(id="mc-nsim", value=1000, type="number",
                       min=100, max=5000, step=100, size="sm"),
@@ -354,15 +360,17 @@ def toggle_guide(n, is_open):
     State("mc-ticker",   "value"),
     State("mc-period",   "value"),
     State("mc-capital",  "value"),
+    State("mc-slippage", "value"),
     State("mc-nsim",     "value"),
     prevent_initial_call=True,
 )
-def run_simulation(_clicks, strategy, ticker, period, capital, n_sim):
+def run_simulation(_clicks, strategy, ticker, period, capital, slippage, n_sim):
 
     # ── 參數清理 ──────────────────────────────────────────────────
-    ticker  = (ticker or "0700.HK").strip().upper()
-    capital = float(capital or 100_000)
-    n_sim   = max(100, min(int(n_sim or 1000), 5000))
+    ticker       = (ticker or "0700.HK").strip().upper()
+    capital      = float(capital or 100_000)
+    slippage_pct = float(slippage or 0.10) / 100
+    n_sim        = max(100, min(int(n_sim or 1000), 5000))
 
     preset = STRATEGY_PRESETS.get(strategy)
     if not preset:
@@ -381,7 +389,7 @@ def run_simulation(_clicks, strategy, ticker, period, capital, n_sim):
             buy_sigs=preset["buy"],
             sell_sigs=preset["sell"],
             trade_size=capital,
-            slippage=0.002,
+            slippage_pct=slippage_pct,
             stop_loss_pct=preset.get("stop_loss_pct"),
             take_profit_pct=preset.get("take_profit_pct"),
             max_hold_days=preset.get("max_hold_days"),

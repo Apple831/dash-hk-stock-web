@@ -25,19 +25,18 @@ from indicators import calculate_indicators
 
 
 # ── 股票清單 ───────────────────────────────────────────────────────
+# stocks.txt 統一存放在 project root（與 downloader 寫入位置一致）
 def load_stocks_from_file() -> list:
-    base = os.path.dirname(os.path.abspath(__file__))
-    # Check project root first (written by TradingView updater), then core/
-    for stocks_path in [os.path.join(os.path.dirname(base), "stocks.txt"),
-                        os.path.join(base, "stocks.txt")]:
-        if os.path.exists(stocks_path):
-            stocks = [
-                line.split("#")[0].strip()
-                for line in open(stocks_path, "r", encoding="utf-8")
-                if ".HK" in line
-            ]
-            if stocks:
-                return stocks
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    stocks_path  = os.path.join(project_root, "stocks.txt")
+    if os.path.exists(stocks_path):
+        stocks = [
+            line.split("#")[0].strip()
+            for line in open(stocks_path, "r", encoding="utf-8")
+            if ".HK" in line
+        ]
+        if stocks:
+            return stocks
     return ["0700.HK", "9988.HK", "3690.HK"]
 
 

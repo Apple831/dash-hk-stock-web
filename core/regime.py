@@ -70,3 +70,42 @@ def detect_regime(df: pd.DataFrame) -> dict:
         "macd_pct":   round(macd_pct, 4),
         "cov_20":     round(cov_20, 2),
     }
+
+
+# ── 向量化制度歷史序列 ─────────────────────────────────────────────
+# 一次計算最近 n_bars 根 K 線的制度標籤，避免 O(N) 重複呼叫 detect_regime。
+# 回傳 list 為時序順序（舊 → 新），最後一筆為當前 K 線的制度。
+def regime_history(df: pd.DataFrame, n_bars: int = 120) -> list:
+    if df.empty or len(df) < 62:
+        return []
+
+    n        = min(int(n_bars), len(df))
+    recent   = df.iloc[-n:]
+    ma_gap   = (recent["MA20"] - recent["MA60"]) / recent["MA60"] * 100
+    macd_pct = recent["MACD_Hist"] / recent["Close"].replace(0, float("nan")) * 100
+    full_cov = df["Close"].rolling(20).std() / df["Close"].rolling(20).mean() * 100
+    cov_20   = full_cov.iloc[-n:]
+
+    rows = []
+    for i in range(len(recent)):
+        mg = float(ma_gap.iloc[i])   if pd.notna(ma_gap.iloc[i])   else 0.0
+        mp = float(macd_pct.iloc[i]) if pd.notna(macd_pct.iloc[i]) else 0.0
+        cv = float(cov_20.iloc[i])   if pd.notna(cov_20.iloc[i])   else 0.0
+
+        if abs(mg) < 2.0:
+            label, color = ("震盪市", "warning") if cv > 2.0 else ("轉折期", "info")
+        elif mg > 2.0:
+            if mp > 0.5:  label, color = "強牛市",  "success"
+            elif mp > 0:  label, color = "弱牛市",  "success"
+            else:         label, color = "牛市警惕","warning"
+        else:
+            if mp < -0.5: label, color = "強熊市",  "danger"
+            elif mp < 0:  label, color = "弱熊市",  "danger"
+            else:         label, color = "熊市觀察","warning"
+
+        rows.append({
+            "date":  recent.index[i],
+            "label": label,
+            "color": color,
+        })
+    return rows
