@@ -37,8 +37,9 @@ my-hk-stock-web-dash/
 └── assets/style.css
 
 ## 注意事項
+- 應該始終使用Traditional Chinese
 - 我需要你（Claude）在這個專案中扮演我的量化交易顧問與代碼助手，協助我審查策略邏輯、優化代碼效能，並建立穩定可靠的提醒機制。
 - core/ 的檔案要移除 streamlit import，改用 flask_caching
 - config.py 永遠用整個重寫，不用 str.replace
 - 制度標籤用「震盪市」不是「震盪」
-- focus on testing the reality of the backtest and walk-forward data, also improve the strategy that will be used on real-trading.
+- 重點檢驗backtest 和 walk-forward 數據的真實性，並改進將在真實交易中使用的策略
