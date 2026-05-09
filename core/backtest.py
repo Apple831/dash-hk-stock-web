@@ -171,6 +171,7 @@ def run_backtest(
     buy_arr   = buy_signal.values
     sell_arr  = sell_signal.values
     close_arr = df["Close"].values.astype(float)
+    open_arr  = df["Open"].values.astype(float)
     low_arr   = df["Low"].values.astype(float)
     high_arr  = df["High"].values.astype(float)
     idx_arr   = df.index
@@ -196,7 +197,7 @@ def run_backtest(
             if days_since_last < effective_cooldown:
                 pass  # 冷卻期內，忽略此買訊
             else:
-                entry_px   = close_arr[i + 1] * (1 + one_side_cost)
+                entry_px   = open_arr[i + 1] * (1 + one_side_cost)
                 entry_date = idx_arr[i + 1]
                 entry_idx  = i + 1
                 # 🟡-7 V18：lot size 取整
@@ -238,7 +239,7 @@ def run_backtest(
             elif max_hold_days and days_held >= max_hold_days:
                 # T+1 出場
                 if i + 1 < n:
-                    exit_px = close_arr[i + 1] * (1 - one_side_cost)
+                    exit_px = open_arr[i + 1] * (1 - one_side_cost)
                     exit_date = idx_arr[i + 1]
                 else:
                     exit_px = close * (1 - one_side_cost)
@@ -247,7 +248,7 @@ def run_backtest(
             elif sell_arr[i] and strategy_sell_allowed:
                 # T+1 出場
                 if i + 1 < n:
-                    exit_px = close_arr[i + 1] * (1 - one_side_cost)
+                    exit_px = open_arr[i + 1] * (1 - one_side_cost)
                     exit_date = idx_arr[i + 1]
                 else:
                     keep.append(pos)
