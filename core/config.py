@@ -15,9 +15,17 @@
 #   • 設為其他正整數 → 該值天數冷卻
 #   • 「⚡ 突破確認」設為 5 -- 強牛市可連續突破時加倉（不被 30 天冷卻擋掉）
 #
-# ⚠️ 重要：本檔策略 desc 內的 WF / 延伸 / 退化率數字皆來自 V17 之前的引擎，
-#         在 V18 修復後（cooldown 解耦、持倉天數 +1、equity 時序）數字會變動。
-#         必須重跑 WF 才能信任。建議在重跑前把 desc 視為「V17 歷史數字」。
+# V18 WF 已重跑（2026-05-09）：desc 內 "V18 數字" 為 1y 引擎結果
+#   is_months=12, oos_months=6, trade_size=100000, slippage=0.001
+#   股票池：180 隻
+#
+# V18-5Y WF 重跑（2026-05-09）：desc 內 "V18-5Y 數字" 為 5 年引擎結果
+#   is_months=18, oos_months=6, trade_size=100000, slippage=0.001
+#   股票池：180 隻（5 年歷史，平均 1164 K 線；10 隻數據不足 < 750 根仍納入）
+#
+# V18-5Y 複審（2026-05-09）：
+#   • 🔄+ MACD+趨勢MIN30 移至 LEGACY（IS +0.22%，退化 -194.2%，IS 靠運氣非 alpha）
+#   • REGIME_RECOMMENDATIONS 強牛市 / 弱牛市 的 MACD+趨勢 改為 💎M30
 #
 # 每個策略 dict 欄位：
 #   desc           - UI 顯示的策略說明
@@ -39,8 +47,8 @@ ACTIVE_PRESETS = {
     # ── 1. 💎+s2 M30 三重出場版【實盤主力冠軍】───────────────────
     "💎+s2 M30 三重出場版【實盤冠軍】": {
         "desc": "【🏆 實盤主力冠軍】b6 (RSI<30) 進場，s2+s6+s8 三重出場（布林上軌 / MACD死叉 / KDJ高位死叉），最少持倉30天。"
-                "V17 數字：WF +7.67% / 延伸 +12.68% / 樣本 2126 / 勝率 69.2% / 退化率 -2.5%。"
-                "⚠️ V18 修復後（持倉天數 +1、equity T+1 時序）需重跑驗證。",
+                "V18 數字：OOS +13.64% / 退化 -85.2% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +5.84% / 退化 -88.7% / 正Fold 83%。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
@@ -49,7 +57,8 @@ ACTIVE_PRESETS = {
 
     # ── 2. 💎+ M30 RSI 進雙出 MIN30 ──────────────────────────────
     "💎+ M30 RSI進雙出MIN30": {
-        "desc": "【實盤候選】b6 進場，s6+s8 雙出場，MIN30。V17 數字：WF +6.80% / 延伸 +15.07% / 樣本 2339 / 勝率 68.6%。"
+        "desc": "【實盤候選】b6 進場，s6+s8 雙出場，MIN30。V18 數字：OOS +13.70% / 退化 -91.3% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +5.27% / 退化 -59.6% / 正Fold 67%。"
                 "比 💎M30 略強，可作冠軍進取版。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, True),
@@ -58,8 +67,9 @@ ACTIVE_PRESETS = {
 
     # ── 3. 💎M30 純粹均值回歸 MIN30 ──────────────────────────────
     "💎M30 純粹均值回歸MIN30": {
-        "desc": "【實盤候選】RSI<30 買入，MACD死叉出，最少持倉30天。V17 數字：WF +6.56% / 延伸 +15.89% / 樣本 2379 / 勝率 69.7%。"
-                "經典基準策略，邏輯最簡單。",
+        "desc": "【實盤候選】RSI<30 買入，MACD死叉出，最少持倉30天。V18 數字：OOS +13.94% / 退化 -131.7% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +4.99% / 退化 -40.0% / 正Fold 67%。"
+                "✅ 5Y 退化率最低（-40%），邏輯最簡單，過擬合風險最低，首選基準策略。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
@@ -67,7 +77,8 @@ ACTIVE_PRESETS = {
 
     # ── 4. 🔄🔄M30 均值回歸長持 MIN30 ────────────────────────────
     "🔄🔄M30 均值回歸長持MIN30": {
-        "desc": "【實盤組合】布林下軌+RSI超賣，MACD死叉出，最少持倉30天。V17 數字：WF +5.42% / 延伸 +15.00% / 樣本 871。"
+        "desc": "【實盤組合】布林下軌+RSI超賣，MACD死叉出，最少持倉30天。V18 數字：OOS +9.30% / 退化 -252.1% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +5.82% / 退化 -75.7% / 正Fold 83%。"
                 "比 💎M30 更挑剔但同等強，可分散搭配。",
         "buy":  (False, False, False, False, True,  True,  False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
@@ -76,35 +87,30 @@ ACTIVE_PRESETS = {
 
     # ── 5. ⚡ 突破確認（強牛市專用，V18 解鎖加倉）─────────────────
     "⚡ 突破確認": {
-        "desc": "【強牛市專用】突破放量+趨勢確認，跌破MA20或放量急跌出。V17 數字：WF +1.21% / 延伸 +7.11%。"
-                "🆕 V18：cooldown 從 30 改為 5 天，強牛市連續突破可加倉（V17 數字基於可加倉舊版，V18 重跑數字應該回升）。",
+        "desc": "【強牛市專用】突破放量+趨勢確認，跌破MA20或放量急跌出。V18 數字：OOS +2.79% / 退化 -78.3% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +1.57% / 退化 -128.7% / 正Fold 83%。"
+                "⚠️ 5Y OOS 僅 +1.57%，扣除手續費後接近損益平衡，謹慎實盤。"
+                "🆕 V18：cooldown 從 30 改為 5 天，強牛市連續突破可加倉。",
         "buy":  (True,  False, False, False, False, False, False, True,  False, False, False),
         "sell": (True,  False, False, True,  False, False, False, False),
         # 🔴-2 V18：突破策略需要連續加倉，cooldown 改 5（一週），不被 30 天綁死
         "cooldown_days": 5,
     },
 
-    # ── 6. 🔄+ MACD+趨勢 MIN30 ──────────────────────────────────
-    "🔄+ MACD+趨勢MIN30": {
-        "desc": "【趨勢市備用】MACD金叉+趨勢確認，MACD死叉出，MIN30。V17 數字：WF +4.80% / 延伸 +4.92%。"
-                "WF≈延伸無 bias，數字真實可信。",
-        "buy":  (False, False, False, False, False, False, True,  True,  False, False, False),
-        "sell": (False, False, False, False, False, True,  False, False),
-        "min_hold_days": 30,
-    },
-
-    # ── 7. 💎K+ M30 雙超賣雙出 MIN30 ─────────────────────────────
+    # ── 6. 💎K+ M30 雙超賣雙出 MIN30 ─────────────────────────────
     "💎K+ M30 雙超賣雙出MIN30 [精選]": {
-        "desc": "【🎯 精選股策略】b6+b11 進場，s6+s8 雙出場，MIN30。V17 數字：WF +5.73% / 延伸 +21.76% / 樣本 133。"
-                "完整 KDJ 強化版，樣本少但延伸極高。",
+        "desc": "【🎯 精選股策略】b6+b11 進場，s6+s8 雙出場，MIN30。V18 數字：OOS +15.03% / 退化 -728.6% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +15.55% / 退化 -354.4% / 正Fold 75%。"
+                "完整 KDJ 強化版，OOS 遠超 IS（市場配合時表現極佳）。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, True),
         "sell": (False, False, False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
 
-    # ── 8. 💎KK30 RSI+KDJ 雙超賣 MIN30 ───────────────────────────
+    # ── 7. 💎KK30 RSI+KDJ 雙超賣 MIN30 ───────────────────────────
     "💎KK30 RSI+KDJ雙超賣MIN30 [精選]": {
-        "desc": "【🎯 精選股策略】b6+b11 進場，MACD死叉出，MIN30。V17 數字：WF +5.08% / 延伸 +21.99% / 樣本 133。"
+        "desc": "【🎯 精選股策略】b6+b11 進場，MACD死叉出，MIN30。V18 數字：OOS +13.68% / 退化 -535.2% / 正Fold 100%。"
+                "V18-5Y 數字：OOS +15.22% / 退化 -310.7% / 正Fold 75%。"
                 "雙重超賣確認，適合資金有限時。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, True),
         "sell": (False, False, False, False, False, True,  False, False),
@@ -163,6 +169,17 @@ LEGACY_PRESETS = {
         "min_hold_days": 30,
     },
 
+    # ── V18-5Y 複審移入 LEGACY ──────────────────────────────────
+    "🔄+ MACD+趨勢MIN30 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-09】MACD金叉+趨勢確認，MACD死叉出，MIN30。"
+                "V18 數字：OOS +7.37% / 退化 -10.5% / 正Fold 67%。"
+                "V18-5Y 數字：OOS +4.14% / 退化 -194.2% / 正Fold 67%。"
+                "5Y 下 IS 僅 +0.22%，IS 表現靠運氣非策略 alpha，移出實盤候選。",
+        "buy":  (False, False, False, False, False, False, True,  True,  False, False, False),
+        "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
+    },
+
     # ── 已驗證 BIAS（教訓紀錄，勿實盤）────────────────────────────
 
     "📈 均值回歸 [BIAS-勿實盤]": {
@@ -207,11 +224,11 @@ LEGACY_PRESETS = {
 REGIME_RECOMMENDATIONS = {
     "強牛市":  [
         "⚡ 突破確認",
-        "🔄+ MACD+趨勢MIN30",
+        "💎M30 純粹均值回歸MIN30",
     ],
     "弱牛市":  [
         "⚡ 突破確認",
-        "🔄+ MACD+趨勢MIN30",
+        "💎M30 純粹均值回歸MIN30",
     ],
     "牛市警惕": [
         "💎+s2 M30 三重出場版【實盤冠軍】",
