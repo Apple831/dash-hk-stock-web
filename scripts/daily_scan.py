@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import requests
 
-from data import load_stocks, get_cached, get_stock_data
+from data import load_stocks, get_stock_data
 from indicators import calculate_indicators, precompute_signals
 from regime import detect_regime
 from config import ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS
@@ -40,9 +40,10 @@ def scan_all() -> list[dict]:
 
     for ticker in tickers:
         try:
-            df = get_cached(ticker, "1y")
-            if df.empty or len(df) < MIN_BARS_FOR_INDICATORS:
+            raw = get_stock_data(ticker, "3mo")
+            if raw.empty or len(raw) < MIN_BARS_FOR_INDICATORS:
                 continue
+            df = calculate_indicators(raw)
             sigs = precompute_signals(df)
 
             matched = []

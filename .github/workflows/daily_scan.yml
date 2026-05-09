@@ -1,0 +1,21 @@
+name: Daily Stock Scan
+on:
+  schedule:
+    - cron: "30 8 * * 1-5"   # UTC 08:30 = HKT 16:30，週一至週五
+  workflow_dispatch:           # 允許手動觸發測試
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy requests
+      - name: Run daily scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/daily_scan.py
