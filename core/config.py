@@ -39,10 +39,6 @@
 #   • ACTIVE_PRESETS 剩 4 個策略
 #
 # V18 新訊號（2026-05-10）：
-#   • b9 重新定義為「相對強弱」——恆指大跌後個股抗跌 + 恆指MA5金叉MA20
-#   • 新增「🔬 相對強弱測試」策略，待 WF 驗證
-#
-# V18 新訊號（2026-05-10，第三次）：
 #   • b12 定義為「資金流向」——MA20下方大量（2-8倍均量）陽燭
 #   • 新增「🔬 資金流向測試」策略，待 WF 驗證
 #   • SELL_LABELS 由 ⑫-⑲ 改為 ⑬-⑳（避免與 b12 的 ⑫ 衝突）
@@ -52,9 +48,10 @@
 #   • 新增 seasonal_filter 欄位（bool）：True 時 run_backtest 限定 1/4/10 月入場
 #   • 新增「🔬 冠軍+季節性」與「🔬 均值回歸+季節性」兩個測試策略
 #
-# V18 b9 熊市過濾（2026-05-10）：
-#   • b9 新增 Layer 4：恆指 MA20 > MA60（大市上升趨勢）
-#   • 新增四個 🔬 b9 疊加測試策略（2×2 矩陣：冠軍/均值回歸買入 × 冠軍/均值回歸出場）
+# V18 b9 相對強弱複審（2026-05-10）：
+#   • 「🔬 相對強弱測試」及所有含 b9 的策略移至 LEGACY
+#   • 原因：熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄
+#   • ACTIVE_PRESETS 剩 7 個策略
 #
 # 每個策略 dict 欄位：
 #   desc            - UI 顯示的策略說明
@@ -68,7 +65,7 @@
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 #
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 12 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 7 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -116,16 +113,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 30,
     },
 
-    # ── 5. 🔬 相對強弱測試（V18 新訊號，待 WF 驗證）──────────────
-    "🔬 相對強弱測試": {
-        "desc": "【🧪 測試中】V18 新訊號：b9 相對強弱——恆指15日跌>5%，個股跌幅<恆指×0.5，恆指MA5金叉MA20。"
-                "sell 沿用冠軍三重出場（s2+s6+s8），最少持倉30天，待 WF 驗證。",
-        "buy":  (False, False, False, False, False, False, False, False, True,  False, False, False),
-        "sell": (False, True,  False, False, False, True,  False, True),
-        "min_hold_days": 30,
-    },
-
-    # ── 6. 🔬 資金流向測試（V18 新訊號，待 WF 驗證）──────────────
+    # ── 5. 🔬 資金流向測試（V18 新訊號，待 WF 驗證）──────────────
     "🔬 資金流向測試": {
         "desc": "【🧪 測試中】V18 新訊號：b12 資金流向——股價在MA20下方，成交量為均量2-8倍，陽線收盤。"
                 "sell 沿用冠軍三重出場（s2+s6+s8），最少持倉30天，待 WF 驗證。",
@@ -134,7 +122,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 30,
     },
 
-    # ── 7. 🔬 冠軍+季節性（V18 季節性測試，待 WF 驗證）──────────
+    # ── 6. 🔬 冠軍+季節性（V18 季節性測試，待 WF 驗證）──────────
     "🔬 冠軍+季節性": {
         "desc": "V18 季節性測試：冠軍策略限定1/4/10月入場，待 WF 驗證",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False),
@@ -143,7 +131,7 @@ ACTIVE_PRESETS = {
         "seasonal_filter": True,
     },
 
-    # ── 8. 🔬 均值回歸+季節性（V18 季節性測試，待 WF 驗證）───────
+    # ── 7. 🔬 均值回歸+季節性（V18 季節性測試，待 WF 驗證）───────
     "🔬 均值回歸+季節性": {
         "desc": "V18 季節性測試：均值回歸限定1/4/10月入場，待 WF 驗證",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False),
@@ -152,43 +140,11 @@ ACTIVE_PRESETS = {
         "seasonal_filter": True,
     },
 
-    # ── 9. 🔬 b9+冠軍買入_冠軍出場（V18 b9疊加測試，待 WF 驗證）─
-    "🔬 b9+冠軍買入_冠軍出場": {
-        "desc": "V18 測試：相對強弱疊加冠軍買入，冠軍出場",
-        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False),
-        "sell": (False, True,  False, False, False, True,  False, True),
-        "min_hold_days": 30,
-    },
-
-    # ── 10. 🔬 b9+冠軍買入_均值回歸出場（V18 b9疊加測試，待 WF 驗證）─
-    "🔬 b9+冠軍買入_均值回歸出場": {
-        "desc": "V18 測試：相對強弱疊加冠軍買入，均值回歸出場",
-        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False),
-        "sell": (False, False, False, False, False, True,  False, False),
-        "min_hold_days": 30,
-    },
-
-    # ── 11. 🔬 b9+均值回歸買入_冠軍出場（V18 b9疊加測試，待 WF 驗證）─
-    "🔬 b9+均值回歸買入_冠軍出場": {
-        "desc": "V18 測試：相對強弱疊加均值回歸買入，冠軍出場",
-        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False),
-        "sell": (False, True,  False, False, False, True,  False, True),
-        "min_hold_days": 30,
-    },
-
-    # ── 12. 🔬 b9+均值回歸買入_均值回歸出場（V18 b9疊加測試，待 WF 驗證）─
-    "🔬 b9+均值回歸買入_均值回歸出場": {
-        "desc": "V18 測試：相對強弱疊加均值回歸買入，均值回歸出場",
-        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False),
-        "sell": (False, False, False, False, False, True,  False, False),
-        "min_hold_days": 30,
-    },
-
 }
 
 
 # ══════════════════════════════════════════════════════════════════
-# LEGACY_PRESETS -- 對照組 / 已驗證 BIAS（純歷史紀錄）
+# LEGACY_PRESETS -- 對照組 / 已驗證 BIAS / 已放棄策略（純歷史紀錄）
 # 不參與：制度矩陣、共振掃描推薦
 # 仍可在 Tab 的「自定義」/「預設」下拉選單中手動選擇查看
 # ══════════════════════════════════════════════════════════════════
@@ -276,6 +232,47 @@ LEGACY_PRESETS = {
                 "V18-5Y-Open 數字：OOS +15.17% / 退化 -278.5% / 正Fold 100%。"
                 "雙重超賣確認，適合資金有限時觀察用。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, True,  False),
+        "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
+    },
+
+    # ── b9 相對強弱：熊市過濾後訊號過少，AND邏輯疊加全部❌，2026-05-10 放棄 ──
+    "🔬 相對強弱測試 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-10】V18 新訊號：b9 相對強弱——恆指15日跌>5%，個股跌幅<恆指×0.5，恆指MA5金叉MA20。"
+                "熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄。",
+        "buy":  (False, False, False, False, False, False, False, False, True,  False, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
+        "min_hold_days": 30,
+    },
+
+    "🔬 b9+冠軍買入_冠軍出場 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-10】相對強弱疊加冠軍買入，冠軍出場。"
+                "熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄。",
+        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
+        "min_hold_days": 30,
+    },
+
+    "🔬 b9+冠軍買入_均值回歸出場 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-10】相對強弱疊加冠軍買入，均值回歸出場。"
+                "熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄。",
+        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False),
+        "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
+    },
+
+    "🔬 b9+均值回歸買入_冠軍出場 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-10】相對強弱疊加均值回歸買入，冠軍出場。"
+                "熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄。",
+        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
+        "min_hold_days": 30,
+    },
+
+    "🔬 b9+均值回歸買入_均值回歸出場 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-10】相對強弱疊加均值回歸買入，均值回歸出場。"
+                "熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄。",
+        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },

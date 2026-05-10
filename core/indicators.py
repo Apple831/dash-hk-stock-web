@@ -98,6 +98,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
 
     b8 = c["MA20"] > c["MA60"]
 
+    # DEPRECATED 2026-05-10，勿用於新策略（熊市過濾後訊號過少，AND邏輯疊加全部❌）
     try:
         from data import get_cached  # local import，避免模組頂層循環依賴
         _hsi = get_cached("^HSI", "5y")
