@@ -52,6 +52,10 @@
 #   • 新增 seasonal_filter 欄位（bool）：True 時 run_backtest 限定 1/4/10 月入場
 #   • 新增「🔬 冠軍+季節性」與「🔬 均值回歸+季節性」兩個測試策略
 #
+# V18 b9 熊市過濾（2026-05-10）：
+#   • b9 新增 Layer 4：恆指 MA20 > MA60（大市上升趨勢）
+#   • 新增四個 🔬 b9 疊加測試策略（2×2 矩陣：冠軍/均值回歸買入 × 冠軍/均值回歸出場）
+#
 # 每個策略 dict 欄位：
 #   desc            - UI 顯示的策略說明
 #   buy             - 12 個買入信號的 tuple (b1~b12)
@@ -62,9 +66,9 @@
 #
 # buy  tuple 順序：b1  b2  b3  b4  b5  b6  b7  b8  b9  b10  b11  b12
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
-
+#
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 8 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 12 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -116,7 +120,7 @@ ACTIVE_PRESETS = {
     "🔬 相對強弱測試": {
         "desc": "【🧪 測試中】V18 新訊號：b9 相對強弱——恆指15日跌>5%，個股跌幅<恆指×0.5，恆指MA5金叉MA20。"
                 "sell 沿用冠軍三重出場（s2+s6+s8），最少持倉30天，待 WF 驗證。",
-        "buy":  (False, False, False, False, False, False, False, False, True, False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, True,  False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
@@ -146,6 +150,38 @@ ACTIVE_PRESETS = {
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
         "seasonal_filter": True,
+    },
+
+    # ── 9. 🔬 b9+冠軍買入_冠軍出場（V18 b9疊加測試，待 WF 驗證）─
+    "🔬 b9+冠軍買入_冠軍出場": {
+        "desc": "V18 測試：相對強弱疊加冠軍買入，冠軍出場",
+        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
+        "min_hold_days": 30,
+    },
+
+    # ── 10. 🔬 b9+冠軍買入_均值回歸出場（V18 b9疊加測試，待 WF 驗證）─
+    "🔬 b9+冠軍買入_均值回歸出場": {
+        "desc": "V18 測試：相對強弱疊加冠軍買入，均值回歸出場",
+        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False),
+        "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
+    },
+
+    # ── 11. 🔬 b9+均值回歸買入_冠軍出場（V18 b9疊加測試，待 WF 驗證）─
+    "🔬 b9+均值回歸買入_冠軍出場": {
+        "desc": "V18 測試：相對強弱疊加均值回歸買入，冠軍出場",
+        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
+        "min_hold_days": 30,
+    },
+
+    # ── 12. 🔬 b9+均值回歸買入_均值回歸出場（V18 b9疊加測試，待 WF 驗證）─
+    "🔬 b9+均值回歸買入_均值回歸出場": {
+        "desc": "V18 測試：相對強弱疊加均值回歸買入，均值回歸出場",
+        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False),
+        "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
     },
 
 }

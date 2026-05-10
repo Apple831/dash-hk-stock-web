@@ -111,7 +111,10 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
         _l2 = (_stk_r10 > _hsi_r10.reindex(df.index).fillna(0) * 0.7).fillna(False)
         _hsi_up  = (_hsi["Close"] > _hsi["Close"].shift(1)).reindex(df.index).fillna(False)
         _l3 = _hsi_up
-        b9 = (_l1 & _l2 & _l3)
+        _hsi_ma20 = _hsi["Close"].rolling(20).mean()
+        _hsi_ma60 = _hsi["Close"].rolling(60).mean()
+        _l4 = (_hsi_ma20 > _hsi_ma60).reindex(df.index).fillna(False)
+        b9 = (_l1 & _l2 & _l3 & _l4)
     else:
         close_52w_high = df["Close"].rolling(min(252, len(df)), min_periods=60).max().shift(1)
         b9 = c["Close"] >= close_52w_high
