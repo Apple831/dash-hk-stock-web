@@ -13,7 +13,6 @@
 #   • 不設 → 沿用 min_hold_days（v17 行為，向後相容）
 #   • 設為 0 → 完全不冷卻（對照組原語意）
 #   • 設為其他正整數 → 該值天數冷卻
-#   • 「⚡ 突破確認」設為 5 -- 強牛市可連續突破時加倉（不被 30 天冷卻擋掉）
 #
 # V18 WF 已重跑（2026-05-09）：desc 內 "V18 數字" 為 1y 引擎結果
 #   is_months=12, oos_months=6, trade_size=100000, slippage=0.001
@@ -35,6 +34,10 @@
 #   • 💎K+ M30 / 💎KK30 移至 LEGACY（退化率 > -278%，OOS 非策略 alpha）
 #   • ACTIVE_PRESETS 剩 5 個策略
 #
+# V18-5Y-Open 複審（2026-05-10，第二次）：
+#   • ⚡ 突破確認 移至 LEGACY（5Y avgIS=-0.21%，手續費拆分後 IS 轉負，無真實 alpha）
+#   • ACTIVE_PRESETS 剩 4 個策略
+#
 # 每個策略 dict 欄位：
 #   desc           - UI 顯示的策略說明
 #   buy            - 11 個買入信號的 tuple (b1~b11)
@@ -46,7 +49,7 @@
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 5 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 4 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -92,18 +95,6 @@ ACTIVE_PRESETS = {
         "buy":  (False, False, False, False, True,  True,  False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
-    },
-
-    # ── 5. ⚡ 突破確認（強牛市專用，V18 解鎖加倉）─────────────────
-    "⚡ 突破確認": {
-        "desc": "【強牛市專用】突破放量+趨勢確認，跌破MA20或放量急跌出。V18 數字：OOS +2.79% / 退化 -78.3% / 正Fold 100%。"
-                "V18-5Y-Open 數字：OOS +1.62% / 退化 -215.1% / 正Fold 83%。"
-                "⚠️ Open版 OOS 僅 +1.62%，扣除手續費後接近損益平衡，建議只用於強牛市。"
-                "🆕 V18：cooldown 從 30 改為 5 天，強牛市連續突破可加倉。",
-        "buy":  (True,  False, False, False, False, False, False, True,  False, False, False),
-        "sell": (True,  False, False, True,  False, False, False, False),
-        # 🔴-2 V18：突破策略需要連續加倉，cooldown 改 5（一週），不被 30 天綁死
-        "cooldown_days": 5,
     },
 
 }
@@ -170,6 +161,18 @@ LEGACY_PRESETS = {
     },
 
     # ── V18-5Y-Open 複審移入 LEGACY ─────────────────────────────
+    # ⚡ 突破確認：IS avgIS -0.21%（手續費拆分後轉負），無真實 alpha，2026-05-10 降級
+    "⚡ 突破確認 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-10】強牛市突破策略。"
+                "V18 數字：OOS +2.79% / 退化 -78.3% / 正Fold 100%。"
+                "V18-5Y-Open 數字：OOS +1.62% / 退化 -215.1% / 正Fold 83%。"
+                "5Y 手續費拆分後 avgIS=-0.21%（IS 轉負），無真實 alpha，降級至 LEGACY。"
+                "🆕 V18：cooldown_days=5 保留（連續突破加倉邏輯）。",
+        "buy":  (True,  False, False, False, False, False, False, True,  False, False, False),
+        "sell": (True,  False, False, True,  False, False, False, False),
+        "cooldown_days": 5,
+    },
+
     "💎K+ M30 雙超賣雙出MIN30 [精選→LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】退化率 -313.7%（> -300% 門檻），5Y OOS 靠運氣非策略 alpha，移出實盤候選。"
                 "V18 數字：OOS +15.03% / 退化 -728.6% / 正Fold 100%。"
@@ -233,11 +236,11 @@ LEGACY_PRESETS = {
 
 REGIME_RECOMMENDATIONS = {
     "強牛市":  [
-        "⚡ 突破確認",
+        "💎+s2 M30 三重出場版【實盤冠軍】",
         "💎M30 純粹均值回歸MIN30",
     ],
     "弱牛市":  [
-        "⚡ 突破確認",
+        "💎+s2 M30 三重出場版【實盤冠軍】",
         "💎M30 純粹均值回歸MIN30",
     ],
     "牛市警惕": [
