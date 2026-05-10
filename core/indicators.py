@@ -98,8 +98,24 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
 
     b8 = c["MA20"] > c["MA60"]
 
-    close_52w_high = df["Close"].rolling(min(252, len(df)), min_periods=60).max().shift(1)
-    b9 = c["Close"] >= close_52w_high
+    try:
+        from data import get_cached  # local import，避免模組頂層循環依賴
+        _hsi = get_cached("^HSI", "5y")
+    except Exception:
+        _hsi = pd.DataFrame()
+
+    if not _hsi.empty:
+        _hsi_r15 = _hsi["Close"].pct_change(15)
+        _stk_r15 = df["Close"].pct_change(15)
+        _hma5    = _hsi["Close"].rolling(5).mean()
+        _hma20   = _hsi["Close"].rolling(20).mean()
+        _l1 = (_hsi_r15 < -0.05).reindex(df.index).fillna(False)
+        _l2 = (_stk_r15 > _hsi_r15.reindex(df.index).fillna(0) * 0.5).fillna(False)
+        _l3 = ((_hma5 > _hma20) & (_hma5.shift(1) <= _hma20.shift(1))).reindex(df.index).fillna(False)
+        b9 = (_l1 & _l2 & _l3)
+    else:
+        close_52w_high = df["Close"].rolling(min(252, len(df)), min_periods=60).max().shift(1)
+        b9 = c["Close"] >= close_52w_high
 
     in_uptrend = c["MA20"] > c["MA60"]
     near_ma20  = (c["Close"] >= c["MA20"] * 0.98) & (c["Close"] <= c["MA20"] * 1.03)

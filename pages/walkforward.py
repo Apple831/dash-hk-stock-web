@@ -18,6 +18,7 @@ from indicators import calculate_indicators
 from walk_forward import run_walk_forward, run_portfolio_walk_forward
 from config import (
     STRATEGY_PRESETS,
+    BUY_LABELS, SELL_LABELS,
     MIN_BARS_FOR_INDICATORS,
     WF_ROBUST_MAX_DEGRADATION, WF_ROBUST_MIN_OOS_POS_RATE,
     WF_WARNING_MAX_DEGRADATION, WF_WARNING_MIN_OOS_POS_RATE,
@@ -26,7 +27,12 @@ from config import (
 
 dash.register_page(__name__, path="/walkforward", name="Walk-Forward")
 
-STRATEGY_OPTIONS = [{"label": n, "value": n} for n in STRATEGY_PRESETS]
+CUSTOM_KEY = "🔧 自訂策略"
+
+STRATEGY_OPTIONS = (
+    [{"label": n, "value": n} for n in STRATEGY_PRESETS]
+    + [{"label": CUSTOM_KEY, "value": CUSTOM_KEY}]
+)
 DEFAULT_STRATEGY  = list(STRATEGY_PRESETS.keys())[0]
 
 PERIOD_OPTIONS = [
@@ -325,15 +331,25 @@ def _fold_table(rows: list) -> dash_table.DataTable:
 
 # ── 數據載入 + WF 執行 ────────────────────────────────────────────────
 def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui,
-            max_positions=0, progress_cb=None, commission_ui=None):
-    preset = STRATEGY_PRESETS.get(strategy)
-    if not preset:
-        return None, False, "⚠️ 找不到策略"
-
-    buy_sigs  = preset["buy"]
-    sell_sigs = preset["sell"]
-    min_hold  = preset.get("min_hold_days")
-    cooldown  = preset.get("cooldown_days")
+            max_positions=0, progress_cb=None, commission_ui=None,
+            custom_buy=None, custom_sell=None):
+    if strategy == CUSTOM_KEY:
+        if not custom_buy:
+            return None, False, "⚠️ 請至少勾選一個買入訊號"
+        if not custom_sell:
+            return None, False, "⚠️ 請至少勾選一個賣出訊號"
+        buy_sigs  = tuple(i in custom_buy  for i in range(11))
+        sell_sigs = tuple(i in custom_sell for i in range(8))
+        min_hold  = None
+        cooldown  = None
+    else:
+        preset = STRATEGY_PRESETS.get(strategy)
+        if not preset:
+            return None, False, "⚠️ 找不到策略"
+        buy_sigs  = preset["buy"]
+        sell_sigs = preset["sell"]
+        min_hold  = preset.get("min_hold_days")
+        cooldown  = preset.get("cooldown_days")
     ts        = float(trade_size or 100_000)
     slip            = float(slippage_ui or 0.10) / 100
     commission_pct  = float(commission_ui or 0.26) / 100
@@ -394,7 +410,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
         return results, True, None
 
 
-def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions, commission=None):
+def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions, commission=None, custom_buy=None, custom_sell=None):
     import traceback
     short = job_id[:8]
     print(f"[WF] Thread start  job={short} mode={mode} ticker={ticker}")
@@ -411,6 +427,8 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
             is_mo, oos_mo, trade_size, slippage,
             max_positions=max_positions,
             commission_ui=commission,
+            custom_buy=custom_buy,
+            custom_sell=custom_sell,
             progress_cb=progress_cb,
         )
         n = len(wf_results) if wf_results else 0
@@ -464,6 +482,58 @@ layout = html.Div([
             md=8, className="mb-2",
         ),
     ], className="mb-1"),
+
+    # 自訂策略面板（選擇 CUSTOM_KEY 才顯示）
+    html.Div(
+        id="wf-custom-panel",
+        style={"display": "none"},
+        children=[
+            html.Hr(className="my-2"),
+            dbc.Row([
+                dbc.Col([
+                    html.Label(
+                        "買入訊號（AND 邏輯：全部勾選條件須同時成立）",
+                        className="small text-muted mb-1 d-block",
+                    ),
+                    dcc.Checklist(
+                        id="wf-custom-buy",
+                        options=[
+                            {"label": f" b{i+1} — {BUY_LABELS[i]}", "value": i}
+                            for i in range(11)
+                        ],
+                        value=[],
+                        inputStyle={"marginRight": "6px"},
+                        labelStyle={
+                            "display": "block",
+                            "marginBottom": "4px",
+                            "fontSize": "0.85rem",
+                        },
+                    ),
+                ], md=6),
+                dbc.Col([
+                    html.Label(
+                        "賣出訊號（OR 邏輯：任一條件觸發即出場）",
+                        className="small text-muted mb-1 d-block",
+                    ),
+                    dcc.Checklist(
+                        id="wf-custom-sell",
+                        options=[
+                            {"label": f" s{i+1} — {SELL_LABELS[i]}", "value": i}
+                            for i in range(8)
+                        ],
+                        value=[],
+                        inputStyle={"marginRight": "6px"},
+                        labelStyle={
+                            "display": "block",
+                            "marginBottom": "4px",
+                            "fontSize": "0.85rem",
+                        },
+                    ),
+                ], md=6),
+            ], className="mb-2"),
+            html.Hr(className="my-2"),
+        ],
+    ),
 
     # 參數列
     dbc.Row([
@@ -532,6 +602,15 @@ layout = html.Div([
 ], className="p-3")
 
 
+# ── Callback：策略切換 → 顯示/隱藏自訂面板 ───────────────────────────
+@callback(
+    Output("wf-custom-panel", "style"),
+    Input("wf-strategy",      "value"),
+)
+def cb_toggle_custom_panel(strategy):
+    return {} if strategy == CUSTOM_KEY else {"display": "none"}
+
+
 # ── Callback：模式切換 → 股票輸入框 ──────────────────────────────────
 @callback(
     Output("wf-ticker-col",    "style"),
@@ -569,10 +648,13 @@ def cb_mode_change(mode):
     State("wf-slippage",           "value"),
     State("wf-commission",         "value"),
     State("wf-max-positions",      "value"),
+    State("wf-custom-buy",         "value"),
+    State("wf-custom-sell",        "value"),
     prevent_initial_call=True,
 )
 def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
-              is_mo, oos_mo, trade_size, slippage, commission, max_positions):
+              is_mo, oos_mo, trade_size, slippage, commission, max_positions,
+              custom_buy, custom_sell):
     _cleanup_stale_jobs()
     job_id = str(uuid.uuid4())
     _WF_JOBS[job_id] = {
@@ -585,6 +667,7 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
         target=_run_wf_thread,
         args=(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage,
               int(max_positions or 0), commission),
+        kwargs={"custom_buy": custom_buy, "custom_sell": custom_sell},
         daemon=True,
     ).start()
 

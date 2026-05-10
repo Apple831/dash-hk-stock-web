@@ -38,6 +38,10 @@
 #   • ⚡ 突破確認 移至 LEGACY（5Y avgIS=-0.21%，手續費拆分後 IS 轉負，無真實 alpha）
 #   • ACTIVE_PRESETS 剩 4 個策略
 #
+# V18 新訊號（2026-05-10）：
+#   • b9 重新定義為「相對強弱」——恆指大跌後個股抗跌 + 恆指MA5金叉MA20
+#   • 新增「🔬 相對強弱測試」策略，待 WF 驗證
+#
 # 每個策略 dict 欄位：
 #   desc           - UI 顯示的策略說明
 #   buy            - 11 個買入信號的 tuple (b1~b11)
@@ -49,7 +53,7 @@
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 4 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 5 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -94,6 +98,15 @@ ACTIVE_PRESETS = {
                 "比 💎M30 更挑剔但同等強，可分散搭配。",
         "buy":  (False, False, False, False, True,  True,  False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
+    },
+
+    # ── 5. 🔬 相對強弱測試（V18 新訊號，待 WF 驗證）──────────────
+    "🔬 相對強弱測試": {
+        "desc": "【🧪 測試中】V18 新訊號：b9 相對強弱——恆指15日跌>5%，個股跌幅<恆指×0.5，恆指MA5金叉MA20。"
+                "sell 沿用冠軍三重出場（s2+s6+s8），最少持倉30天，待 WF 驗證。",
+        "buy":  (False, False, False, False, False, False, False, False, True, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
 
@@ -281,7 +294,7 @@ PRESET_CUSTOM = "✏️ 自定義"
 BUY_LABELS = [
     "①突破放量", "②MA5金叉", "③底背離", "④底部突破",
     "⑤布林下軌", "⑥RSI超賣", "⑦MACD金叉", "⑧趨勢確認",
-    "⑨52週新高", "⑩縮量回調", "⑪KDJ超賣金叉",
+    "⑨相對強弱", "⑩縮量回調", "⑪KDJ超賣金叉",
 ]
 SELL_LABELS = [
     "⑫頭部破MA20", "⑬布林上軌", "⑭縮量頂部", "⑮放量急跌",

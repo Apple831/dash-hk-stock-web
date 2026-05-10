@@ -9,6 +9,29 @@
 
 import pandas as pd
 from indicators import precompute_signals
+from data import get_cached
+
+
+def compute_b9(df: pd.DataFrame) -> pd.Series:
+    """相對強弱買入訊號（b9）：三層同時滿足才觸發"""
+    hsi_df = get_cached("^HSI", period="5y")
+    if hsi_df.empty:
+        return pd.Series(False, index=df.index)
+
+    hsi_ret15  = hsi_df["Close"].pct_change(15)
+    stock_ret15 = df["Close"].pct_change(15)
+    hsi_ma5    = hsi_df["Close"].rolling(5).mean()
+    hsi_ma20   = hsi_df["Close"].rolling(20).mean()
+
+    layer1 = (hsi_ret15 < -0.05).reindex(df.index).fillna(False)
+
+    hsi_ret_aligned = hsi_ret15.reindex(df.index).fillna(0)
+    layer2 = (stock_ret15 > hsi_ret_aligned * 0.5).fillna(False)
+
+    hsi_golden = (hsi_ma5 > hsi_ma20) & (hsi_ma5.shift(1) <= hsi_ma20.shift(1))
+    layer3 = hsi_golden.reindex(df.index).fillna(False)
+
+    return (layer1 & layer2 & layer3).fillna(False)
 
 
 def signal_strength_score(df: pd.DataFrame, n_signals_hit: int,
@@ -37,6 +60,8 @@ def evaluate_signals(df: pd.DataFrame) -> dict:
 
     sigs = precompute_signals(df)
     last = {k: bool(v.iloc[-1]) for k, v in sigs.items()}
+
+    b9_hit = bool(compute_b9(df).iloc[-1])
 
     c       = df.iloc[-1]
     p       = df.iloc[-2]
@@ -68,9 +93,9 @@ def evaluate_signals(df: pd.DataFrame) -> dict:
         ("⑧ 個股趨勢確認（MA20 > MA60）",
          f"MA20={c['MA20']:.2f}  MA60={c['MA60']:.2f}  {'✅ 上升趨勢' if last['b8'] else '❌ 非上升趨勢'}",
          last["b8"]),
-        ("⑨ 52週新高突破（真突破）",
-         f"現價 {c['Close']:.2f}  需 >= 52週高點",
-         last["b9"]),
+        ("⑨ 相對強弱（恆指大跌後個股抗跌）",
+         f"恆指15日跌幅 / 個股15日跌幅 / 恆指MA5金叉MA20",
+         b9_hit),
         ("⑩ 縮量回調至 MA20",
          f"MA20={c['MA20']:.2f}  量比={c['Volume']/vol_avg:.1f}x（需<0.8x，上升趨勢中）",
          last["b10"]),
