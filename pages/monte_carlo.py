@@ -405,6 +405,7 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
             min_hold_days=preset.get("min_hold_days"),
             cooldown_days=preset.get("cooldown_days"),
             ticker=ticker,
+            seasonal_filter=preset.get("seasonal_filter", False),
         )
     except Exception as e:
         return f"❌ 回測失敗：{str(e)[:80]}", []

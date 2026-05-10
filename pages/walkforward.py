@@ -338,18 +338,20 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
             return None, False, "⚠️ 請至少勾選一個買入訊號"
         if not custom_sell:
             return None, False, "⚠️ 請至少勾選一個賣出訊號"
-        buy_sigs  = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(12))
-        sell_sigs = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
-        min_hold  = None
-        cooldown  = None
+        buy_sigs        = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(12))
+        sell_sigs       = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
+        min_hold        = None
+        cooldown        = None
+        seasonal_filter = False
     else:
         preset = STRATEGY_PRESETS.get(strategy)
         if not preset:
             return None, False, "⚠️ 找不到策略"
-        buy_sigs  = preset["buy"]
-        sell_sigs = preset["sell"]
-        min_hold  = preset.get("min_hold_days")
-        cooldown  = preset.get("cooldown_days")
+        buy_sigs        = preset["buy"]
+        sell_sigs       = preset["sell"]
+        min_hold        = preset.get("min_hold_days")
+        cooldown        = preset.get("cooldown_days")
+        seasonal_filter = preset.get("seasonal_filter", False)
     ts        = float(trade_size or 100_000)
     slip            = float(slippage_ui or 0.10) / 100
     commission_pct  = float(commission_ui or 0.26) / 100
@@ -377,6 +379,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 min_hold_days=min_hold,
                 cooldown_days=cooldown,
                 progress_cb=progress_cb,
+                seasonal_filter=seasonal_filter,
             )
         except Exception as e:
             return None, False, f"❌ WF 失敗：{str(e)[:80]}"
@@ -404,6 +407,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 cooldown_days=cooldown,
                 max_concurrent_positions=max_pos if max_pos > 0 else None,
                 progress_cb=progress_cb,
+                seasonal_filter=seasonal_filter,
             )
         except Exception as e:
             return None, True, f"❌ 投資組合 WF 失敗：{str(e)[:80]}"

@@ -66,6 +66,7 @@ def _get_extended_trades(
     cooldown_days=None,
     commission_pct: float = None,
     max_extension_days: int = 365,
+    seasonal_filter: bool = False,
 ) -> list:
     if full_df is None or full_df.empty:
         return []
@@ -88,6 +89,8 @@ def _get_extended_trades(
             bt_kw["min_hold_days"] = min_hold_days
         if cooldown_days is not None:
             bt_kw["cooldown_days"] = cooldown_days
+        if seasonal_filter:
+            bt_kw["seasonal_filter"] = True
 
         extended_trades, _, _ = run_backtest(
             extended_slice, effective_buy, sell_sigs,
@@ -141,6 +144,7 @@ def run_walk_forward(
     extra_buy_sigs: tuple = None,
     track_extended: bool = True,
     progress_cb=None,            # callable(fold, total_folds, info_str) or None
+    seasonal_filter: bool = False,
 ) -> list:
     if df.empty or len(df) < 60:
         return []
@@ -155,6 +159,8 @@ def run_walk_forward(
             kw["min_hold_days"] = min_hold_days
         if cooldown_days is not None:
             kw["cooldown_days"] = cooldown_days
+        if seasonal_filter:
+            kw["seasonal_filter"] = True
         return kw
 
     results     = []
@@ -241,6 +247,7 @@ def run_walk_forward(
                 hsi_filter,
                 min_hold_days=min_hold_days,
                 cooldown_days=cooldown_days,
+                seasonal_filter=seasonal_filter,
             )
 
         results.append({
@@ -328,6 +335,7 @@ def run_portfolio_walk_forward(
     extra_buy_sigs: tuple = None,
     track_extended: bool = True,
     progress_cb=None,            # callable(fold, total_folds, ticker_str) or None
+    seasonal_filter: bool = False,
 ) -> list:
     if not stock_data:
         return []
@@ -341,6 +349,8 @@ def run_portfolio_walk_forward(
             kw["min_hold_days"] = min_hold_days
         if cooldown_days is not None:
             kw["cooldown_days"] = cooldown_days
+        if seasonal_filter:
+            kw["seasonal_filter"] = True
         return kw
 
     ref_df     = max(stock_data.values(), key=len)
@@ -435,6 +445,7 @@ def run_portfolio_walk_forward(
                         hsi_filter,
                         min_hold_days=min_hold_days,
                         cooldown_days=cooldown_days,
+                        seasonal_filter=seasonal_filter,
                     )
                     for t in ticker_extended:
                         t["ticker"] = ticker

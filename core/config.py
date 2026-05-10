@@ -48,18 +48,23 @@
 #   • SELL_LABELS 由 ⑫-⑲ 改為 ⑬-⑳（避免與 b12 的 ⑫ 衝突）
 #   • 所有 buy tuple 由 11 元素擴充為 12 元素
 #
+# V18 季節性測試（2026-05-10）：
+#   • 新增 seasonal_filter 欄位（bool）：True 時 run_backtest 限定 1/4/10 月入場
+#   • 新增「🔬 冠軍+季節性」與「🔬 均值回歸+季節性」兩個測試策略
+#
 # 每個策略 dict 欄位：
-#   desc           - UI 顯示的策略說明
-#   buy            - 12 個買入信號的 tuple (b1~b12)
-#   sell           - 8 個賣出信號的 tuple (s1~s8)
-#   min_hold_days  - (可選) 策略級最小持倉天數
-#   cooldown_days  - (可選) 同股加倉冷卻期（V18 新增）
+#   desc            - UI 顯示的策略說明
+#   buy             - 12 個買入信號的 tuple (b1~b12)
+#   sell            - 8 個賣出信號的 tuple (s1~s8)
+#   min_hold_days   - (可選) 策略級最小持倉天數
+#   cooldown_days   - (可選) 同股加倉冷卻期（V18 新增）
+#   seasonal_filter - (可選) True = 限定 1/4/10 月入場（V18 季節性測試新增）
 #
 # buy  tuple 順序：b1  b2  b3  b4  b5  b6  b7  b8  b9  b10  b11  b12
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 6 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 8 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -123,6 +128,24 @@ ACTIVE_PRESETS = {
         "buy":  (False, False, False, False, False, False, False, False, False, False, False, True),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
+    },
+
+    # ── 7. 🔬 冠軍+季節性（V18 季節性測試，待 WF 驗證）──────────
+    "🔬 冠軍+季節性": {
+        "desc": "V18 季節性測試：冠軍策略限定1/4/10月入場，待 WF 驗證",
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False),
+        "sell": (False, True,  False, False, False, True,  False, True),
+        "min_hold_days": 30,
+        "seasonal_filter": True,
+    },
+
+    # ── 8. 🔬 均值回歸+季節性（V18 季節性測試，待 WF 驗證）───────
+    "🔬 均值回歸+季節性": {
+        "desc": "V18 季節性測試：均值回歸限定1/4/10月入場，待 WF 驗證",
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False),
+        "sell": (False, False, False, False, False, True,  False, False),
+        "min_hold_days": 30,
+        "seasonal_filter": True,
     },
 
 }

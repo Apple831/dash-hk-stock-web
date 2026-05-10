@@ -182,3 +182,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
                     ("s5",s5),("s6",s6),("s7",s7),("s8",s8)]:
         sigs[name] = s.fillna(False) & ~mask
     return sigs
+
+
+def is_seasonal(df: pd.DataFrame) -> pd.Series:
+    return pd.Series(df.index.month.isin([1, 4, 10]), index=df.index)

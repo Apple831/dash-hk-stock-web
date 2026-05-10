@@ -109,6 +109,7 @@ def run_backtest(
     market_filter_series: pd.Series = None,
     # 🟡-7 V18：lot size 用
     ticker: str = None,
+    seasonal_filter: bool = False,
 ) -> tuple:
     """
     參數說明（V18）：
@@ -161,6 +162,10 @@ def run_backtest(
             .fillna(True)
         )
         buy_signal = buy_signal & hsi_aligned
+
+    if seasonal_filter:
+        from indicators import is_seasonal
+        buy_signal = buy_signal & is_seasonal(df)
 
     if sell_active:
         sell_signal = sigs[sell_active[0]].copy()

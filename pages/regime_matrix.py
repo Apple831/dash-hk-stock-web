@@ -139,6 +139,7 @@ def _run_strategy(name, preset, stock_data, hsi_df, is_mo, oos_mo, trade_size, s
     kw = {"min_oos_trades": min_oos}
     if preset.get("min_hold_days") is not None: kw["min_hold_days"] = preset["min_hold_days"]
     if preset.get("cooldown_days")  is not None: kw["cooldown_days"]  = preset["cooldown_days"]
+    if preset.get("seasonal_filter"):            kw["seasonal_filter"] = True
     try:
         results = run_portfolio_walk_forward(
             stock_data, preset["buy"], preset["sell"],

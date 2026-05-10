@@ -311,16 +311,18 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
         sell_sigs = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
         if not any(buy_sigs):
             return None, None, None, None, "⚠️ 自定義模式請至少選擇一個買入信號"
-        min_hold_days = None
-        cooldown_days = None
+        min_hold_days   = None
+        cooldown_days   = None
+        seasonal_filter = False
     else:
         preset = STRATEGY_PRESETS.get(strategy)
         if not preset:
             return None, None, None, None, "⚠️ 找不到策略"
-        buy_sigs      = preset["buy"]
-        sell_sigs     = preset["sell"]
-        min_hold_days = preset.get("min_hold_days")
-        cooldown_days = preset.get("cooldown_days")
+        buy_sigs        = preset["buy"]
+        sell_sigs       = preset["sell"]
+        min_hold_days   = preset.get("min_hold_days")
+        cooldown_days   = preset.get("cooldown_days")
+        seasonal_filter = preset.get("seasonal_filter", False)
 
     ticker          = (ticker or "0700.HK").strip().upper()
     trade_size      = float(trade_size or 100_000)
@@ -350,6 +352,7 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
             min_hold_days=min_hold_days,
             cooldown_days=cooldown_days,
             ticker=ticker,
+            seasonal_filter=seasonal_filter,
         )
     except ValueError as e:
         return None, None, None, None, f"⚠️ 參數錯誤：{e}"
