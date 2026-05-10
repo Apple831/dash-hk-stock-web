@@ -1,4 +1,4 @@
-# pages/monte_carlo.py
+﻿# pages/monte_carlo.py
 # ══════════════════════════════════════════════════════════════════
 # 🎲 Monte Carlo 模擬頁面
 #
@@ -57,20 +57,27 @@ def _section(title: str, children):
 # ══════════════════════════════════════════════════════════════════
 # Monte Carlo 核心運算
 # ══════════════════════════════════════════════════════════════════
-def _run_mc(returns_pct: list, n_sim: int, initial_capital: float) -> np.ndarray:
+def _run_mc(returns_pct: list, n_sim: int, initial_capital: float,
+            block_size: int = 0) -> tuple:
     """
-    Bootstrap 重採樣，返回 shape (n_sim, n_trades+1) 的資金矩陣。
-    第 0 列 = initial_capital（起點）。
+    Block Bootstrap 重採樣，保留時序相關性。
+    返回 (equity_matrix, actual_block_size)，equity_matrix shape: (n_sim, n_trades+1)。
+    block_size=0 自動設為 max(2, sqrt(n))。block_size>=n 退化為 i.i.d.（bs=1）。
     """
     arr = np.array(returns_pct, dtype=float) / 100.0
     n   = len(arr)
-    # 有放回抽樣：shape (n_sim, n)
-    sampled = np.random.choice(arr, size=(n_sim, n), replace=True)
-    # 累乘 → 資金增長倍數
-    growth = np.cumprod(1.0 + sampled, axis=1)
-    # 補上起點 1.0
-    starts = np.ones((n_sim, 1))
-    return initial_capital * np.hstack([starts, growth])   # (n_sim, n+1)
+    bs  = block_size if block_size and block_size > 0 else max(2, int(np.sqrt(n)))
+    if bs >= n:
+        bs = 1
+    n_blocks   = int(np.ceil(n / bs))
+    max_start  = n - bs
+    starts_idx = np.random.randint(0, max_start + 1, size=(n_sim, n_blocks))
+    offsets    = np.arange(bs)
+    idx        = (starts_idx[:, :, None] + offsets[None, None, :]).reshape(n_sim, -1)[:, :n]
+    sampled    = arr[idx]
+    growth     = np.cumprod(1.0 + sampled, axis=1)
+    s          = np.ones((n_sim, 1))
+    return initial_capital * np.hstack([s, growth]), bs
 
 
 def _max_drawdown_vec(equity_matrix: np.ndarray) -> np.ndarray:
@@ -148,6 +155,12 @@ layout = html.Div([
             html.Label("模擬次數", className="small text-muted mb-1 d-block"),
             dbc.Input(id="mc-nsim", value=1000, type="number",
                       min=100, max=5000, step=100, size="sm"),
+        ], xs=6, md=1, className="mb-2"),
+
+        dbc.Col([
+            html.Label("Block 大小 (0=自動)", className="small text-muted mb-1 d-block"),
+            dbc.Input(id="mc-block-size", value=0, type="number",
+                      min=0, max=50, step=1, size="sm"),
         ], xs=6, md=1, className="mb-2"),
 
         dbc.Col([
@@ -369,9 +382,10 @@ def toggle_guide(n, is_open):
     State("mc-slippage",    "value"),
     State("mc-commission",  "value"),
     State("mc-nsim",        "value"),
+    State("mc-block-size",   "value"),
     prevent_initial_call=True,
 )
-def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commission, n_sim):
+def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commission, n_sim, block_size):
 
     # ── 參數清理 ──────────────────────────────────────────────────
     ticker          = (ticker or "0700.HK").strip().upper()
@@ -424,7 +438,7 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
 
     # ── 執行 MC 模擬 ───────────────────────────────────────────────
     np.random.seed(None)   # 每次隨機
-    eq = _run_mc(returns, n_sim, capital)   # (n_sim, n_trades+1)
+    eq, actual_bs = _run_mc(returns, n_sim, capital, int(block_size or 0))
 
     final_eq   = eq[:, -1]
     max_dds    = _max_drawdown_vec(eq)
@@ -708,6 +722,7 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
         _metric_card("📊 歷史均回報",
                      f"{mean_ret:+.2f}%",
                      "#26a69a" if mean_ret > 0 else "#ef5350"),
+        _metric_card("🧱 Block Size", str(actual_bs), "white"),
     ], className="mb-4 g-2")
 
     # 百分位表
@@ -748,8 +763,9 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
     # ── 方法論說明 ────────────────────────────────────────────────
     methodology_note = dbc.Alert([
         html.Strong("📌 方法論說明："),
-        " 本模擬採用 Bootstrap 重採樣，假設每筆交易回報互相獨立（i.i.d.）。",
-        " 交易次數與真實歷史相同，每次模擬隨機打亂順序重組。",
+        f" 本模擬採用 Block Bootstrap 重採樣（block_size={actual_bs}），",
+        " 保留相鄰交易的時序相關性，比 i.i.d. 更保守地估計連敗風險。",
+        " block_size=0 時自動設為 sqrt(交易筆數)。",
         " 結果反映「在相同回報分布下，不同運氣排列」的統計範圍，",
         " 不能預測未來，但可評估策略的穩健性與尾部風險。",
     ], color="secondary", className="small mt-4 mb-2")
@@ -778,6 +794,6 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
     status = (
         f"✅ {ticker} × {strategy} | "
         f"{n_trades} 筆歷史交易 | {n_sim:,} 次模擬完成 | "
-        f"破產率 {bankruptcy_rate:.1f}% | 虧損率 {loss_rate:.1f}%"
+        f"破產率 {bankruptcy_rate:.1f}% | 虧損率 {loss_rate:.1f}% | block={actual_bs}"
     )
     return status, results

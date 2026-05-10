@@ -1,0 +1,50 @@
+/* ── Dash Dropdown 深色主題修復 ── */
+.Select-menu-outer {
+    background-color: #2b2b2b !important;
+    border: 1px solid #555 !important;
+}
+
+.Select-option {
+    background-color: #2b2b2b !important;
+    color: #ffffff !important;
+}
+
+.Select-option:hover,
+.Select-option.is-focused {
+    background-color: #3d3d3d !important;
+    color: #ffffff !important;
+}
+
+.Select-option.is-selected {
+    background-color: #26a69a !important;
+    color: #ffffff !important;
+}
+
+.Select-control {
+    background-color: #2b2b2b !important;
+    border: 1px solid #555 !important;
+    color: #ffffff !important;
+}
+
+.Select-value-label {
+    color: #ffffff !important;
+}
+
+.Select-placeholder {
+    color: #aaaaaa !important;
+}
+
+.Select-input input {
+    color: #ffffff !important;
+}
+
+.Select--single > .Select-control .Select-value {
+    color: #ffffff !important;
+}
+
+/* Dash 新版 Select (dash >= 2.x) */
+.dash-dropdown .Select-menu-outer,
+.VirtualizedSelectFocusedOption {
+    background-color: #3d3d3d !important;
+    color: #ffffff !important;
+}
