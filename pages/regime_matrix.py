@@ -7,7 +7,7 @@ import pandas as pd
 from data import get_stock_data, load_stocks, batch_download
 from indicators import calculate_indicators
 from walk_forward import run_portfolio_walk_forward
-from config import ACTIVE_PRESETS, STRATEGY_PRESETS
+from config import ACTIVE_PRESETS, STRATEGY_PRESETS, COMMISSION_PCT
 from regime import detect_regime
 
 dash.register_page(__name__, path="/regime-matrix", name="制度矩陣")
@@ -144,6 +144,7 @@ def _run_strategy(name, preset, stock_data, hsi_df, is_mo, oos_mo, trade_size, s
             stock_data, preset["buy"], preset["sell"],
             is_months=is_mo, oos_months=oos_mo,
             trade_size=trade_size, slippage=slippage,
+            commission_pct=COMMISSION_PCT,
             **kw,
         )
     except Exception:

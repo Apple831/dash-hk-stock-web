@@ -126,12 +126,13 @@ def run_backtest(
         )
 
     # ── 計算單邊交易成本 ──────────────────────────────────────────
+    # commission_pct：雙邊手續費（港股印花稅+交易費+結算費+佣金），單邊取 / 2
+    # slippage_pct  ：單邊滑點（市場衝擊），買賣各扣一次
+    _comm_one_side = (commission_pct if commission_pct is not None else 0.0026) / 2
     if slippage_pct is not None:
-        one_side_cost = slippage_pct + (commission_pct if commission_pct is not None else 0.0013)
-    elif commission_pct is not None:
-        one_side_cost = slippage + commission_pct
+        one_side_cost = slippage_pct + _comm_one_side
     else:
-        one_side_cost = slippage + 0.0013
+        one_side_cost = slippage + _comm_one_side
 
     # ── 🔴-2 V18: cooldown 獨立解析 ──────────────────────────────
     if cooldown_days is None:

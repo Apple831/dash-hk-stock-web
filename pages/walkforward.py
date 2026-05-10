@@ -325,7 +325,7 @@ def _fold_table(rows: list) -> dash_table.DataTable:
 
 # ── 數據載入 + WF 執行 ────────────────────────────────────────────────
 def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui,
-            max_positions=0, progress_cb=None):
+            max_positions=0, progress_cb=None, commission_ui=None):
     preset = STRATEGY_PRESETS.get(strategy)
     if not preset:
         return None, False, "⚠️ 找不到策略"
@@ -335,9 +335,10 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
     min_hold  = preset.get("min_hold_days")
     cooldown  = preset.get("cooldown_days")
     ts        = float(trade_size or 100_000)
-    slip      = float(slippage_ui or 0.10) / 100
-    is_mo     = int(is_mo  or 12)
-    oos_mo    = int(oos_mo or 6)
+    slip            = float(slippage_ui or 0.10) / 100
+    commission_pct  = float(commission_ui or 0.26) / 100
+    is_mo           = int(is_mo  or 12)
+    oos_mo          = int(oos_mo or 6)
     max_pos   = int(max_positions or 0)
 
     if mode == "single":
@@ -356,6 +357,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 df, buy_sigs, sell_sigs,
                 is_months=is_mo, oos_months=oos_mo,
                 trade_size=ts, slippage=slip,
+                commission_pct=commission_pct,
                 min_hold_days=min_hold,
                 cooldown_days=cooldown,
                 progress_cb=progress_cb,
@@ -381,6 +383,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 stock_data, buy_sigs, sell_sigs,
                 is_months=is_mo, oos_months=oos_mo,
                 trade_size=ts, slippage=slip,
+                commission_pct=commission_pct,
                 min_hold_days=min_hold,
                 cooldown_days=cooldown,
                 max_concurrent_positions=max_pos if max_pos > 0 else None,
@@ -391,7 +394,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
         return results, True, None
 
 
-def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions):
+def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions, commission=None):
     import traceback
     short = job_id[:8]
     print(f"[WF] Thread start  job={short} mode={mode} ticker={ticker}")
@@ -407,6 +410,7 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
             mode, strategy, ticker, total_period,
             is_mo, oos_mo, trade_size, slippage,
             max_positions=max_positions,
+            commission_ui=commission,
             progress_cb=progress_cb,
         )
         n = len(wf_results) if wf_results else 0
@@ -502,8 +506,9 @@ layout = html.Div([
     ], className="mb-1"),
 
     dbc.Row([
-        _param_col("每筆金額 (HKD)", "wf-trade-size", value=100000, step=10000),
-        _param_col("純滑點%",        "wf-slippage",   value=0.10,   step=0.01, min=0),
+        _param_col("每筆金額 (HKD)", "wf-trade-size",  value=100000, step=10000),
+        _param_col("純滑點%",        "wf-slippage",    value=0.10,   step=0.01, min=0),
+        _param_col("手續費%（雙邊）",  "wf-commission",  value=0.26,   step=0.01, min=0),
         dbc.Col([
             html.Label("最大同時持倉數 (0=不限)", className="small text-muted mb-1 d-block"),
             dbc.Input(id="wf-max-positions", type="number", size="sm",
@@ -562,11 +567,12 @@ def cb_mode_change(mode):
     State("wf-oos-mo",             "value"),
     State("wf-trade-size",         "value"),
     State("wf-slippage",           "value"),
+    State("wf-commission",         "value"),
     State("wf-max-positions",      "value"),
     prevent_initial_call=True,
 )
 def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
-              is_mo, oos_mo, trade_size, slippage, max_positions):
+              is_mo, oos_mo, trade_size, slippage, commission, max_positions):
     _cleanup_stale_jobs()
     job_id = str(uuid.uuid4())
     _WF_JOBS[job_id] = {
@@ -578,7 +584,7 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
     threading.Thread(
         target=_run_wf_thread,
         args=(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage,
-              int(max_positions or 0)),
+              int(max_positions or 0), commission),
         daemon=True,
     ).start()
 

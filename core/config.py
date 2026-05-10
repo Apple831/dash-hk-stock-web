@@ -308,3 +308,8 @@ WF_ROBUST_MIN_OOS_POS_RATE  = 60.0  # % OOS 正回報 fold 比率
 WF_WARNING_MAX_DEGRADATION  = 65.0  # %
 WF_WARNING_MIN_OOS_POS_RATE = 50.0  # %
 WF_MIN_IS_RETURN_FOR_CALC   = 0.5   # % IS 絕對值 < 0.5 不計退化率
+
+# ── 交易成本常數 ─────────────────────────────────────────────────────────────
+# 港股單邊真實成本：印花稅 0.1% + 交易費 0.005% + 結算費 0.002% + 佣金約 0.03% ≈ 0.13%
+COMMISSION_PCT = 0.0026   # 雙邊手續費（單邊 0.13% × 2）
+SLIPPAGE_PCT   = 0.001    # 單邊滑點（市場衝擊成本，買賣各扣一次）

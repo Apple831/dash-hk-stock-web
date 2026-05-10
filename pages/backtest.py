@@ -271,7 +271,7 @@ _PORTFOLIO_COND = [
 
 def _run_portfolio_scan(strategy, period, trade_size, slippage,
                         stop_loss, take_profit, max_hold,
-                        custom_buy, custom_sell):
+                        custom_buy, custom_sell, commission=None):
     tickers = load_stocks()
     rows    = []
     errors  = 0
@@ -282,6 +282,7 @@ def _run_portfolio_scan(strategy, period, trade_size, slippage,
                 strategy, ticker, period, trade_size,
                 slippage, stop_loss, take_profit, max_hold,
                 custom_buy=custom_buy, custom_sell=custom_sell,
+                commission_ui=commission,
             )
             if err_t or not m_t or m_t["交易次數"] == 0:
                 continue
@@ -303,7 +304,7 @@ def _run_portfolio_scan(strategy, period, trade_size, slippage,
 # ── 回測核心 ──────────────────────────────────────────────────────────
 def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
          stop_loss, take_profit, max_hold,
-         custom_buy=None, custom_sell=None):
+         custom_buy=None, custom_sell=None, commission_ui=None):
 
     if strategy == PRESET_CUSTOM:
         buy_sigs  = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(11))
@@ -321,9 +322,10 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
         min_hold_days = preset.get("min_hold_days")
         cooldown_days = preset.get("cooldown_days")
 
-    ticker       = (ticker or "0700.HK").strip().upper()
-    trade_size   = float(trade_size or 100_000)
-    slippage_pct = float(slippage_pct_ui or 0.10) / 100
+    ticker          = (ticker or "0700.HK").strip().upper()
+    trade_size      = float(trade_size or 100_000)
+    slippage_pct    = float(slippage_pct_ui or 0.10) / 100
+    commission_pct  = float(commission_ui or 0.26) / 100
     stop_loss_v  = float(stop_loss  or 0) or None
     take_profit_v= float(take_profit or 0) or None
     max_hold_v   = int(float(max_hold or 0)) or None
@@ -341,6 +343,7 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
             sell_sigs=sell_sigs,
             trade_size=trade_size,
             slippage_pct=slippage_pct,
+            commission_pct=commission_pct,
             stop_loss_pct=stop_loss_v,
             take_profit_pct=take_profit_v,
             max_hold_days=max_hold_v,
@@ -399,8 +402,9 @@ layout = html.Div([
 
     # ── 行 2：回測參數 + 按鈕 ─────────────────────────────────────────
     dbc.Row([
-        _param_col("每筆金額 (HKD)", "bt-trade-size", value=100000, step=10000),
-        _param_col("純滑點%",         "bt-slippage",   value=0.10,   step=0.01,  min=0),
+        _param_col("每筆金額 (HKD)", "bt-trade-size",  value=100000, step=10000),
+        _param_col("純滑點%",         "bt-slippage",    value=0.10,   step=0.01,  min=0),
+        _param_col("手續費%（雙邊）",  "bt-commission",  value=0.26,   step=0.01,  min=0),
         _param_col("止損% (0=不啟用)", "bt-stop-loss",  value=0,      step=1,     min=0),
         _param_col("止盈% (0=不啟用)", "bt-take-profit",value=0,      step=5,     min=0),
         _param_col("最長持倉天數 (0=不限)", "bt-max-hold", value=0,   step=10,    min=0),
@@ -491,6 +495,7 @@ def cb_toggle_custom(strategy):
     State("bt-period",           "value"),
     State("bt-trade-size",       "value"),
     State("bt-slippage",         "value"),
+    State("bt-commission",       "value"),
     State("bt-stop-loss",        "value"),
     State("bt-take-profit",      "value"),
     State("bt-max-hold",         "value"),
@@ -499,7 +504,7 @@ def cb_toggle_custom(strategy):
     prevent_initial_call=True,
 )
 def cb_run_backtest(n_single, n_portfolio, strategy, ticker, period,
-                    trade_size, slippage, stop_loss, take_profit, max_hold,
+                    trade_size, slippage, commission, stop_loss, take_profit, max_hold,
                     custom_buy, custom_sell):
 
     trigger = ctx.triggered_id
@@ -509,7 +514,7 @@ def cb_run_backtest(n_single, n_portfolio, strategy, ticker, period,
         rows, errors = _run_portfolio_scan(
             strategy, period, trade_size, slippage,
             stop_loss, take_profit, max_hold,
-            custom_buy, custom_sell,
+            custom_buy, custom_sell, commission=commission,
         )
         if not rows:
             return "⚠️ 全倉掃描：無任何股票有交易記錄（請先下載緩存數據）", []
@@ -550,6 +555,7 @@ def cb_run_backtest(n_single, n_portfolio, strategy, ticker, period,
         strategy, ticker, period, trade_size,
         slippage, stop_loss, take_profit, max_hold,
         custom_buy=custom_buy, custom_sell=custom_sell,
+        commission_ui=commission,
     )
     if err:
         return err, []

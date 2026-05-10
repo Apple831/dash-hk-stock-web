@@ -64,6 +64,7 @@ def _get_extended_trades(
     hsi_filter: pd.Series,
     min_hold_days=None,
     cooldown_days=None,
+    commission_pct: float = None,
     max_extension_days: int = 365,
 ) -> list:
     if full_df is None or full_df.empty:
@@ -91,6 +92,7 @@ def _get_extended_trades(
         extended_trades, _, _ = run_backtest(
             extended_slice, effective_buy, sell_sigs,
             trade_size=trade_size, slippage=slippage,
+            commission_pct=commission_pct,
             stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
             max_hold_days=max_hold_days,
             _precomputed=None,
@@ -128,6 +130,7 @@ def run_walk_forward(
     oos_months: int = 3,
     trade_size: float = 100_000,
     slippage: float = 0.002,
+    commission_pct: float = None,
     stop_loss_pct: float = None,
     take_profit_pct: float = None,
     max_hold_days: int = None,
@@ -175,6 +178,7 @@ def run_walk_forward(
         is_trades, is_equity, _ = run_backtest(
             is_df, effective_buy, sell_sigs,
             trade_size=trade_size, slippage=slippage,
+            commission_pct=commission_pct,
             stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
             max_hold_days=max_hold_days,
             _precomputed=pre_is,
@@ -191,6 +195,7 @@ def run_walk_forward(
         oos_trades_all, _, _ = run_backtest(
             oos_full, effective_buy, sell_sigs,
             trade_size=trade_size, slippage=slippage,
+            commission_pct=commission_pct,
             stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
             max_hold_days=max_hold_days,
             _precomputed=None,
@@ -311,6 +316,7 @@ def run_portfolio_walk_forward(
     oos_months: int = 6,
     trade_size: float = 100_000,
     slippage: float = 0.002,
+    commission_pct: float = None,
     stop_loss_pct: float = None,
     take_profit_pct: float = None,
     max_hold_days: int = None,
@@ -380,6 +386,7 @@ def run_portfolio_walk_forward(
             is_t, _, _ = run_backtest(
                 is_df, effective_buy, sell_sigs,
                 trade_size=trade_size, slippage=slippage,
+                commission_pct=commission_pct,
                 stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
                 max_hold_days=max_hold_days,
                 _precomputed=pre_is,
@@ -403,6 +410,7 @@ def run_portfolio_walk_forward(
             oos_t_all, _, _ = run_backtest(
                 oos_full_df, effective_buy, sell_sigs,
                 trade_size=trade_size, slippage=slippage,
+                commission_pct=commission_pct,
                 stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
                 max_hold_days=max_hold_days,
                 _precomputed=None,
