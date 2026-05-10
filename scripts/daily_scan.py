@@ -104,7 +104,15 @@ def main() -> int:
         hits = scan_all()
 
         if not hits:
-            print(f"[SCAN] {date_str} 無命中，靜默退出", flush=True)
+            print(f"[SCAN] {date_str} 無命中，發送心跳", flush=True)
+            heartbeat = (
+                f"📡 港股狙擊手 每日掃描\n"
+                f"📅 {date_str}\n"
+                f"🌍 制度：{regime_label}\n"
+                f"\n"
+                f"✅ 今日無買入訊號，持倉不變"
+            )
+            send_telegram(heartbeat)
             return 0
 
         message = build_message(hits, regime_label, date_str)
@@ -112,10 +120,16 @@ def main() -> int:
         print(message, flush=True)
         send_telegram(message)
         return 0
+
     except Exception as e:
         print(f"[FATAL] {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc()
+        # 嘗試發失敗警告（若 Telegram 本身沒壞）
+        try:
+            send_telegram(f"🚨 港股狙擊手 掃描失敗\n📅 {date_str}\n❌ {type(e).__name__}: {e}")
+        except Exception:
+            pass
         return 1
 
 
