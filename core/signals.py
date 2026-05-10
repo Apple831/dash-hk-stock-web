@@ -103,35 +103,40 @@ def evaluate_signals(df: pd.DataFrame) -> dict:
         ("⑪ KDJ 超賣金叉（K<20, D<20, K上穿D）",
          f"K={c['K']:.1f}  D={c['D']:.1f}  J={c['J']:.1f}  昨K={p['K']:.1f}  昨D={p['D']:.1f}",
          last["b11"]),
+        # ── b12: 資金流向 ────────────────────────────────────────
+        ("⑫ 資金流向（MA20下放量陽線）",
+         f"收盤={c['Close']:.2f}  MA20={c['MA20']:.2f}  "
+         f"量比={c['Volume']/vol_avg:.1f}x（需2-8倍均量，且陽線）",
+         last["b12"]),
     ]
 
     pct_chg = (c["Close"] - p["Close"]) / p["Close"] * 100
     ph      = df["Close"].iloc[-10:].max()
 
     sell_signals = [
-        ("⑫ 頭部形態跌破 MA20（放量）",
+        ("⑬ 頭部形態跌破 MA20（放量）",
          f"跌破MA20={'是' if bool(c['Close']<c['MA20']) else '否'}  量比={c['Volume']/vol_avg:.1f}x",
          last["s1"]),
-        ("⑬ 布林帶上軌賣出",
+        ("⑭ 布林帶上軌賣出",
          f"收盤 {c['Close']:.2f}  BB上軌 {c['BB_upper']:.2f}",
          last["s2"]),
-        ("⑭ 上漲縮量（警惕頂部）",
+        ("⑮ 上漲縮量（警惕頂部）",
          f"近高={ph:.2f}  量比={c['Volume']/vol_avg:.1f}x（需<0.6x）",
          last["s3"]),
-        ("⑮ 放量急跌",
+        ("⑯ 放量急跌",
          f"跌幅={pct_chg:.2f}%  量比={c['Volume']/vol_avg:.1f}x",
          last["s4"]),
-        ("⑯ RSI 超買（> 70）",
+        ("⑰ RSI 超買（> 70）",
          f"RSI = {c['RSI']:.1f}",
          last["s5"]),
-        ("⑰ MACD 死叉（DIF下穿DEA）",
+        ("⑱ MACD 死叉（DIF下穿DEA）",
          f"DIF={c['DIF']:.4f}  DEA={c['DEA']:.4f}  昨DIF={p['DIF']:.4f}",
          last["s6"]),
-        ("⑱ 三日陰線 + 跌破MA20",
+        ("⑲ 三日陰線 + 跌破MA20",
          f"連續3根陰線={'是' if (c['Close']<c['Open']) else '否（今日）'}  收盤<MA20={'是' if bool(c['Close']<c['MA20']) else '否'}",
          last["s7"]),
         # ── v17 新增：s8 (KDJ 高位死叉) ──────────────────────────
-        ("⑲ KDJ 高位死叉（K>80, D>80, K下穿D）",
+        ("⑳ KDJ 高位死叉（K>80, D>80, K下穿D）",
          f"K={c['K']:.1f}  D={c['D']:.1f}  J={c['J']:.1f}  昨K={p['K']:.1f}  昨D={p['D']:.1f}",
          last["s8"]),
     ]

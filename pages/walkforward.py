@@ -338,8 +338,8 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
             return None, False, "⚠️ 請至少勾選一個買入訊號"
         if not custom_sell:
             return None, False, "⚠️ 請至少勾選一個賣出訊號"
-        buy_sigs  = tuple(i in custom_buy  for i in range(11))
-        sell_sigs = tuple(i in custom_sell for i in range(8))
+        buy_sigs  = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(12))
+        sell_sigs = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
         min_hold  = None
         cooldown  = None
     else:
@@ -495,38 +495,40 @@ layout = html.Div([
                         "買入訊號（AND 邏輯：全部勾選條件須同時成立）",
                         className="small text-muted mb-1 d-block",
                     ),
-                    dcc.Checklist(
+                    dbc.Checklist(
                         id="wf-custom-buy",
                         options=[
-                            {"label": f" b{i+1} — {BUY_LABELS[i]}", "value": i}
-                            for i in range(11)
+                            {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
+                            for i in range(12)
                         ],
                         value=[],
-                        inputStyle={"marginRight": "6px"},
+                        className="small",
+                        inputStyle={"cursor": "pointer"},
                         labelStyle={
                             "display": "block",
-                            "marginBottom": "4px",
-                            "fontSize": "0.85rem",
+                            "marginBottom": "3px",
+                            "cursor": "pointer",
                         },
                     ),
                 ], md=6),
                 dbc.Col([
                     html.Label(
-                        "賣出訊號（OR 邏輯：任一條件觸發即出場）",
+                        "賣出訊號（OR 邏輯：任一觸發即賣出）",
                         className="small text-muted mb-1 d-block",
                     ),
-                    dcc.Checklist(
+                    dbc.Checklist(
                         id="wf-custom-sell",
                         options=[
-                            {"label": f" s{i+1} — {SELL_LABELS[i]}", "value": i}
+                            {"label": f" {SELL_LABELS[i]}", "value": f"s{i+1}"}
                             for i in range(8)
                         ],
                         value=[],
-                        inputStyle={"marginRight": "6px"},
+                        className="small",
+                        inputStyle={"cursor": "pointer"},
                         labelStyle={
                             "display": "block",
-                            "marginBottom": "4px",
-                            "fontSize": "0.85rem",
+                            "marginBottom": "3px",
+                            "cursor": "pointer",
                         },
                     ),
                 ], md=6),
@@ -608,7 +610,7 @@ layout = html.Div([
     Input("wf-strategy",      "value"),
 )
 def cb_toggle_custom_panel(strategy):
-    return {} if strategy == CUSTOM_KEY else {"display": "none"}
+    return {"display": "block"} if strategy == CUSTOM_KEY else {"display": "none"}
 
 
 # ── Callback：模式切換 → 股票輸入框 ──────────────────────────────────

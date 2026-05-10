@@ -127,6 +127,17 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
     # 比 b6 (RSI<30) 更嚴格，預期樣本較少但精度更高
     b11 = (c["K"] < 20) & (c["D"] < 20) & (c["K"] > c["D"]) & (p["K"] <= p["D"])
 
+    # ── b12: 資金流向（本次新增）────────────────────────────────
+    # Layer 1: Close < MA20（超賣區間）
+    # Layer 2: 2× vol_ma < Volume < 8× vol_ma（大量，排除異常爆量）
+    # Layer 3: Close > Open（陽燭，當日多方勝出）
+    b12 = (
+        (c["Close"] < c["MA20"]) &
+        (c["Volume"] > vol_ma * 2) &
+        (c["Volume"] < vol_ma * 8) &
+        (c["Close"] > c["Open"])
+    )
+
     # ── 賣出訊號 ──────────────────────────────────────────────────
     close_ma10u = df["Close"].rolling(10).mean().shift(1)
     ma60_ma10u  = df["MA60"].rolling(10).mean().shift(1)
@@ -166,7 +177,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
     sigs = {}
     for name, s in [("b1",b1),("b2",b2),("b3",b3),("b4",b4),("b5",b5),
                     ("b6",b6),("b7",b7),("b8",b8),("b9",b9),("b10",b10),
-                    ("b11",b11),
+                    ("b11",b11),("b12",b12),
                     ("s1",s1),("s2",s2),("s3",s3),("s4",s4),
                     ("s5",s5),("s6",s6),("s7",s7),("s8",s8)]:
         sigs[name] = s.fillna(False) & ~mask

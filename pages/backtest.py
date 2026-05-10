@@ -307,7 +307,7 @@ def _run(strategy, ticker, period, trade_size, slippage_pct_ui,
          custom_buy=None, custom_sell=None, commission_ui=None):
 
     if strategy == PRESET_CUSTOM:
-        buy_sigs  = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(11))
+        buy_sigs  = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(12))
         sell_sigs = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
         if not any(buy_sigs):
             return None, None, None, None, "⚠️ 自定義模式請至少選擇一個買入信號"
@@ -436,7 +436,7 @@ layout = html.Div([
                             id="bt-custom-buy",
                             options=[
                                 {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
-                                for i in range(11)
+                                for i in range(12)
                             ],
                             value=[],
                             inline=True,

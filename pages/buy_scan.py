@@ -316,7 +316,7 @@ layout = html.Div([
                     id="bscan-custom-buy",
                     options=[
                         {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
-                        for i in range(11)
+                        for i in range(12)
                     ],
                     value=[],
                     inline=True,
