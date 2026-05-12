@@ -19,6 +19,12 @@ from indicators import calculate_indicators, precompute_signals
 from backtest import run_backtest, calc_bt_metrics, build_hsi_filter
 
 try:
+    from historical_universe import get_universe_cache, load_eodhd_prices
+except ImportError:
+    get_universe_cache = None
+    load_eodhd_prices  = None
+
+try:
     import streamlit as st
 except ImportError:
     st = None
@@ -336,6 +342,7 @@ def run_portfolio_walk_forward(
     track_extended: bool = True,
     progress_cb=None,            # callable(fold, total_folds, ticker_str) or None
     seasonal_filter: bool = False,
+    use_pit_universe: bool = False,
 ) -> list:
     if not stock_data:
         return []
@@ -367,6 +374,16 @@ def run_portfolio_walk_forward(
     start         = 0
     n_total_folds = max(1, (total_days - is_days) // oos_days)
 
+    # PIT 預計算（只在 use_pit_universe=True 時執行）
+    universe_cache = {}
+    if use_pit_universe and get_universe_cache is not None:
+        pit_dates = []
+        s = 0
+        while s + is_days + oos_days <= total_days:
+            pit_dates.append(all_dates[s])
+            s += oos_days
+        universe_cache = get_universe_cache(pit_dates)
+
     while start + is_days + oos_days <= total_days:
 
         is_start_date  = all_dates[start]
@@ -375,12 +392,25 @@ def run_portfolio_walk_forward(
         oos_end_idx    = min(start + is_days + oos_days - 1, total_days - 1)
         oos_end_date   = all_dates[oos_end_idx]
 
+        # 決定此 Fold 使用的股票池
+        if use_pit_universe and get_universe_cache is not None:
+            pit_tickers = universe_cache.get(is_start_date, [])
+            fold_stock_data = {}
+            for tkr in pit_tickers:
+                eodhd_df = load_eodhd_prices(tkr)
+                if not eodhd_df.empty and len(eodhd_df) >= 62:
+                    fold_stock_data[tkr] = eodhd_df
+                elif tkr in stock_data and not stock_data[tkr].empty and len(stock_data[tkr]) >= 62:
+                    fold_stock_data[tkr] = stock_data[tkr]
+        else:
+            fold_stock_data = stock_data
+
         all_is_trades       = []
         all_oos_trades      = []
         all_extended_trades = []
         n_stocks_run        = 0
 
-        for ticker, full_df in stock_data.items():
+        for ticker, full_df in fold_stock_data.items():
             if progress_cb:
                 progress_cb(fold, n_total_folds, ticker)
             if full_df is None or full_df.empty or len(full_df) < 62:
@@ -491,6 +521,7 @@ def run_portfolio_walk_forward(
             "forced_exit_count":   len(oos_forced_trades),
             "extended_count":      len(all_extended_trades),
             "n_stocks":            n_stocks_run,
+            "pit_stock_count":     len(fold_stock_data),
         })
 
         start += oos_days
