@@ -35,7 +35,11 @@ def load_eodhd_prices(ticker: str) -> pd.DataFrame:
             'adjusted_close': 'Adj Close',
         }, inplace=True)
         cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
-        return df[cols]
+        df = df[cols]
+        if not df.empty and len(df) >= 62:
+            from indicators import calculate_indicators
+            df = calculate_indicators(df)
+        return df
     except Exception:
         return pd.DataFrame()
 
