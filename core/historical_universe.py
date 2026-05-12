@@ -25,7 +25,16 @@ def load_eodhd_prices(ticker: str) -> pd.DataFrame:
         df = pd.DataFrame(records)
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date").sort_index()
-        cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+        df.index = pd.to_datetime(df.index)
+        df.rename(columns={
+            'open': 'Open',
+            'high': 'High',
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume',
+            'adjusted_close': 'Adj Close',
+        }, inplace=True)
+        cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
         return df[cols]
     except Exception:
         return pd.DataFrame()
@@ -59,12 +68,12 @@ def get_historical_universe(
             if len(df) < min_bars:
                 continue
 
-            last_close = df.iloc[-1]["close"]
+            last_close = df.iloc[-1]["Close"]
             if last_close < min_price:
                 continue
 
             last_30 = df.tail(30)
-            avg_turnover = (last_30["close"] * last_30["volume"]).mean()
+            avg_turnover = (last_30["Close"] * last_30["Volume"]).mean()
             if avg_turnover < min_turnover_hkd:
                 continue
 
@@ -106,10 +115,10 @@ def get_universe_cache(dates: list, **kwargs) -> dict:
                 df_cut = df[df.index <= cutoff]
                 if len(df_cut) < min_bars:
                     continue
-                if df_cut.iloc[-1]["close"] < min_price:
+                if df_cut.iloc[-1]["Close"] < min_price:
                     continue
                 last_30 = df_cut.tail(30)
-                avg_turnover = (last_30["close"] * last_30["volume"]).mean()
+                avg_turnover = (last_30["Close"] * last_30["Volume"]).mean()
                 if avg_turnover < min_turnover_hkd:
                     continue
                 result.append(ticker)
