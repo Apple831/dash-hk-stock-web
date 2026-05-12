@@ -1,3 +1,4 @@
+import datetime
 import dash
 from dash import html, dcc, dash_table, callback, Output, Input, State, no_update
 import dash_bootstrap_components as dbc
@@ -12,6 +13,7 @@ dash.register_page(__name__, path="/multi-scan", name="共振掃描")
 
 _REGIME_RECS      = REGIME_RECOMMENDATIONS
 _BEAR_LABELS      = {"弱熊市", "強熊市"}
+_OSC_LABELS       = {"震盪市", "轉折期"}
 
 # ── Table 樣式（和其他 scan 頁一致）──────────────────────────────────
 _HDR  = {"backgroundColor": "#1a1a1a", "color": "#fff",
@@ -122,16 +124,7 @@ def _detect_regime() -> tuple[str, list]:
         ]),
     ], className="mb-3 border-secondary")
 
-    components = [card]
-    if is_bear:
-        components.append(
-            dbc.Alert(
-                f"⛔ 實盤禁區：當前制度為「{reg['label']}」，嚴禁實盤買入，請等待制度改變。",
-                color="danger",
-                className="mt-1",
-            )
-        )
-    return reg["label"], components
+    return reg["label"], [card]
 
 
 # ── 買入共振掃描 ──────────────────────────────────────────────────────
@@ -431,6 +424,10 @@ layout = html.Div([
     Output("mscan-sell-panel",   "style"),
     Output("mscan-regime-card",  "children"),
     Output("mscan-regime-store", "data"),
+    Output("mscan-buy-result",   "children"),
+    Output("mscan-buy-btn",      "children"),
+    Output("mscan-buy-btn",      "disabled"),
+    Output("mscan-buy-btn",      "color"),
     Input("mscan-mode",          "value"),
 )
 def cb_switch_mode(mode):
@@ -439,18 +436,47 @@ def cb_switch_mode(mode):
 
     if mode == "buy":
         label, card_children = _detect_regime()
-        return buy_style, sell_style, card_children, label
+        today = datetime.date.today().strftime("%Y-%m-%d")
 
-    return buy_style, sell_style, no_update, no_update
+        if label in _BEAR_LABELS:
+            bear_alert = dbc.Alert([
+                f"⛔ 實盤禁區：當前制度為「{label}」。",
+                html.Br(),
+                "制度改變為牛市或震盪市前，系統拒絕輸出買入訊號。",
+                html.Br(),
+                f"上次制度更新：{today}",
+            ], color="danger")
+            return (
+                buy_style, sell_style,
+                card_children, label,
+                bear_alert,
+                "🚫 熊市封鎖中",
+                True,
+                "danger",
+            )
+
+        return (
+            buy_style, sell_style,
+            card_children, label,
+            [],
+            "🔍 開始共振掃描",
+            False,
+            "success",
+        )
+
+    return buy_style, sell_style, no_update, no_update, no_update, no_update, no_update, no_update
 
 
 # ── CB 2：買入共振掃描 ────────────────────────────────────────────────
 @callback(
-    Output("mscan-buy-status", "children"),
-    Output("mscan-buy-result", "children"),
-    Input("mscan-buy-btn",     "n_clicks"),
-    State("mscan-regime-store","data"),
-    State("mscan-lookback",    "value"),
+    Output("mscan-buy-status",  "children"),
+    Output("mscan-buy-result",  "children",  allow_duplicate=True),
+    Output("mscan-buy-btn",     "children",  allow_duplicate=True),
+    Output("mscan-buy-btn",     "disabled",  allow_duplicate=True),
+    Output("mscan-buy-btn",     "color",     allow_duplicate=True),
+    Input("mscan-buy-btn",      "n_clicks"),
+    State("mscan-regime-store", "data"),
+    State("mscan-lookback",     "value"),
     prevent_initial_call=True,
 )
 def cb_buy_scan(n_clicks, regime_label, lookback):
@@ -458,20 +484,39 @@ def cb_buy_scan(n_clicks, regime_label, lookback):
     if not regime_label:
         regime_label, _ = _detect_regime()
 
+    today = datetime.date.today().strftime("%Y-%m-%d")
+
+    if regime_label in _BEAR_LABELS:
+        bear_alert = dbc.Alert([
+            f"⛔ 實盤禁區：當前制度為「{regime_label}」。",
+            html.Br(),
+            "制度改變為牛市或震盪市前，系統拒絕輸出買入訊號。",
+            html.Br(),
+            f"上次制度更新：{today}",
+        ], color="danger")
+        return (
+            f"⛔ 實盤禁區：{regime_label} 禁止掃描買入",
+            bear_alert,
+            "🚫 熊市封鎖中", True, "danger",
+        )
+
     recs = _REGIME_RECS.get(regime_label, list(ACTIVE_PRESETS.keys()))
     if not recs:
-        if regime_label in _BEAR_LABELS:
-            return (
-                f"⛔ 實盤禁區：{regime_label} 禁止掃描買入",
-                [dbc.Alert(
-                    f"⛔ 實盤禁區：當前制度「{regime_label}」嚴禁實盤買入，共振掃描已停用。",
-                    color="danger",
-                )],
-            )
-        return "⚠️ 無推薦策略", []
+        return "⚠️ 無推薦策略", [], no_update, no_update, no_update
 
     results, status = _resonance_scan(recs, lookback)
-    return status, _grouped_result(results, len(recs))
+    result_children = _grouped_result(results, len(recs))
+
+    if regime_label in _OSC_LABELS:
+        result_children = [
+            dbc.Alert(
+                "⚠️ 當前震盪市，建議只考慮均值回歸策略，降低倉位至 50%",
+                color="warning",
+                className="mb-2",
+            )
+        ] + result_children
+
+    return status, result_children, no_update, no_update, no_update
 
 
 # ── CB 3：持倉賣出警報 ────────────────────────────────────────────────

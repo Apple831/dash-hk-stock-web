@@ -25,6 +25,16 @@ except ImportError:
     load_eodhd_prices  = None
 
 try:
+    from regime import detect_regime as _detect_regime
+except ImportError:
+    _detect_regime = None
+
+try:
+    from data import get_cached as _get_cached_for_bear
+except ImportError:
+    _get_cached_for_bear = None
+
+try:
     import streamlit as st
 except ImportError:
     st = None
@@ -343,6 +353,7 @@ def run_portfolio_walk_forward(
     progress_cb=None,            # callable(fold, total_folds, ticker_str) or None
     seasonal_filter: bool = False,
     use_pit_universe: bool = False,
+    bear_filter: bool = False,
 ) -> list:
     if not stock_data:
         return []
@@ -384,6 +395,20 @@ def run_portfolio_walk_forward(
             s += oos_days
         universe_cache = get_universe_cache(pit_dates)
 
+    # 熊市過濾：一次性抓取 ^HSI（避免在 loop 內重複下載）
+    _hsi_regime_df = None
+    if bear_filter:
+        if _detect_regime is None or _get_cached_for_bear is None:
+            pass
+        else:
+            try:
+                _hsi_regime_df = _get_cached_for_bear("^HSI", "5y")
+                if _hsi_regime_df is not None and _hsi_regime_df.empty:
+                    _hsi_regime_df = None
+            except Exception as e:
+                print(f"[WF] bear_filter: failed to fetch ^HSI: {e}")
+                _hsi_regime_df = None
+
     while start + is_days + oos_days <= total_days:
 
         is_start_date  = all_dates[start]
@@ -391,6 +416,39 @@ def run_portfolio_walk_forward(
         oos_start_date = all_dates[start + is_days]
         oos_end_idx    = min(start + is_days + oos_days - 1, total_days - 1)
         oos_end_date   = all_dates[oos_end_idx]
+
+        # 熊市過濾：若 OOS 開始前 HSI 處於熊市，跳過此 Fold
+        if bear_filter and _hsi_regime_df is not None and _detect_regime is not None:
+            _hsi_slice = _hsi_regime_df[_hsi_regime_df.index < oos_start_date]
+            if len(_hsi_slice) >= 60:
+                _regime = _detect_regime(_hsi_slice)
+                if _regime.get("bucket") == "🔴 熊市":
+                    results.append({
+                        "fold":                fold,
+                        "is_start":            is_start_date,
+                        "is_end":              is_end_date,
+                        "oos_start":           oos_start_date,
+                        "oos_end":             oos_end_date,
+                        "is_metrics":          {},
+                        "oos_metrics":         {},
+                        "is_trades":           [],
+                        "oos_trades":          [],
+                        "oos_forced_trades":   [],
+                        "oos_extended_trades": [],
+                        "is_equity":           pd.DataFrame(),
+                        "oos_equity":          pd.DataFrame(),
+                        "valid_oos":           False,
+                        "oos_trade_count":     0,
+                        "forced_exit_count":   0,
+                        "extended_count":      0,
+                        "n_stocks":            0,
+                        "pit_stock_count":     0,
+                        "skipped_bear":        True,
+                        "filter_reason":       "⛔ 熊市",
+                    })
+                    start += oos_days
+                    fold  += 1
+                    continue
 
         # 決定此 Fold 使用的股票池
         if use_pit_universe and get_universe_cache is not None:
@@ -522,6 +580,8 @@ def run_portfolio_walk_forward(
             "extended_count":      len(all_extended_trades),
             "n_stocks":            n_stocks_run,
             "pit_stock_count":     len(fold_stock_data),
+            "skipped_bear":        False,
+            "filter_reason":       "",
         })
 
         start += oos_days

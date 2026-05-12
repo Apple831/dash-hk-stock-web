@@ -61,6 +61,7 @@ FOLD_COLS = [
     {"name": "OOS交易數",  "id": "OOS 交易數"},
     {"name": "有效",       "id": "有效"},
     {"name": "股票數",     "id": "股票數"},
+    {"name": "過濾原因",   "id": "過濾原因"},
 ]
 
 
@@ -85,6 +86,25 @@ def _degradation(is_ret: float, oos_ret: float):
 def _build_rows(wf_results: list) -> list:
     rows = []
     for r in wf_results:
+        if r.get("skipped_bear"):
+            rows.append({
+                "Fold":        r["fold"],
+                "IS 期間":     f"{r['is_start'].strftime('%Y-%m')} → {r['is_end'].strftime('%Y-%m')}",
+                "OOS 期間":    f"{r['oos_start'].strftime('%Y-%m')} → {r['oos_end'].strftime('%Y-%m')}",
+                "IS 均回報%":  "—",
+                "OOS 均回報%": "—",
+                "退化率%":     "—",
+                "IS 勝率%":    "—",
+                "OOS 勝率%":   "—",
+                "IS 交易數":   "—",
+                "OOS 交易數":  "—",
+                "有效":        "⏭️ 跳過",
+                "股票數":      "—",
+                "過濾原因":    r.get("filter_reason", "⛔ 熊市"),
+                "_deg_raw":    None,
+                "_valid_oos":  False,
+            })
+            continue
         im      = r["is_metrics"]  or {}
         om      = r["oos_metrics"] or {}
         is_ret  = im.get("平均每筆回報%", 0.0)
@@ -103,6 +123,7 @@ def _build_rows(wf_results: list) -> list:
             "OOS 交易數":  r["oos_trade_count"],
             "有效":        "✅" if r["valid_oos"] else f"⚠️ {r['oos_trade_count']}筆",
             "股票數":      r.get("pit_stock_count", r.get("n_stocks", 0)),
+            "過濾原因":    "",
             # 內部欄位（不直接顯示）
             "_deg_raw":    deg,
             "_valid_oos":  r["valid_oos"],
@@ -341,7 +362,7 @@ def _fold_table(rows: list) -> dash_table.DataTable:
 # ── 數據載入 + WF 執行 ────────────────────────────────────────────────
 def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage_ui,
             max_positions=0, progress_cb=None, commission_ui=None,
-            custom_buy=None, custom_sell=None, use_pit=False):
+            custom_buy=None, custom_sell=None, use_pit=False, bear_filter=False):
     if strategy == CUSTOM_KEY:
         if not custom_buy:
             return None, False, "⚠️ 請至少勾選一個買入訊號"
@@ -418,13 +439,14 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
                 progress_cb=progress_cb,
                 seasonal_filter=seasonal_filter,
                 use_pit_universe=use_pit,
+                bear_filter=bear_filter,
             )
         except Exception as e:
             return None, True, f"❌ 投資組合 WF 失敗：{str(e)[:80]}"
         return results, True, None
 
 
-def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions, commission=None, custom_buy=None, custom_sell=None, use_pit=False):
+def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage, max_positions, commission=None, custom_buy=None, custom_sell=None, use_pit=False, bear_filter=False):
     import traceback
     short = job_id[:8]
     print(f"[WF] Thread start  job={short} mode={mode} ticker={ticker}")
@@ -445,6 +467,7 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
             custom_sell=custom_sell,
             progress_cb=progress_cb,
             use_pit=use_pit,
+            bear_filter=bear_filter,
         )
         n = len(wf_results) if wf_results else 0
         print(f"[WF] Thread done   job={short} results={n} err={err}")
@@ -462,6 +485,7 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
                 "trade_size":    trade_size,
                 "max_positions": max_positions,
                 "use_pit":       use_pit,
+                "bear_filter":   bear_filter,
             },
         }
     except Exception as e:
@@ -612,6 +636,15 @@ layout = html.Div([
             ),
         ], id="wf-pit-col", xs=12, md=3, className="mb-2",
            style={"display": "none"}),
+        dbc.Col([
+            html.Label(" ", className="small text-muted mb-1 d-block"),
+            dbc.Switch(
+                id="wf-bear-filter",
+                label="🛡️ 熊市過濾（跳過熊市 Fold）",
+                value=False,
+            ),
+        ], id="wf-bear-filter-col", xs=12, md=3, className="mb-2",
+           style={"display": "none"}),
         dbc.Col(
             dbc.Button("🔬 開始驗證", id="wf-btn",
                        color="primary", size="sm", className="w-100 mt-4"),
@@ -640,12 +673,13 @@ def cb_toggle_custom_panel(strategy):
 
 # ── Callback：模式切換 → 股票輸入框 ──────────────────────────────────
 @callback(
-    Output("wf-ticker-col",    "style"),
-    Output("wf-total-period",  "options"),
-    Output("wf-portfolio-hint","style"),
-    Output("wf-max-pos-col",   "style"),
-    Output("wf-pit-col",       "style"),
-    Input("wf-mode",           "value"),
+    Output("wf-ticker-col",       "style"),
+    Output("wf-total-period",     "options"),
+    Output("wf-portfolio-hint",   "style"),
+    Output("wf-max-pos-col",      "style"),
+    Output("wf-pit-col",          "style"),
+    Output("wf-bear-filter-col",  "style"),
+    Input("wf-mode",              "value"),
 )
 def cb_mode_change(mode):
     if mode == "portfolio":
@@ -654,8 +688,8 @@ def cb_mode_change(mode):
             {"label": "3年（緩存）", "value": "3y"},
             {"label": "5年（緩存）", "value": "5y"},
         ]
-        return {"display": "none"}, portfolio_opts, {}, {}, {}
-    return {}, PERIOD_OPTIONS, {"display": "none"}, {"display": "none"}, {"display": "none"}
+        return {"display": "none"}, portfolio_opts, {}, {}, {}, {}
+    return {}, PERIOD_OPTIONS, {"display": "none"}, {"display": "none"}, {"display": "none"}, {"display": "none"}
 
 
 # ── Callback：開始驗證（啟動 thread）────────────────────────────────
@@ -679,11 +713,12 @@ def cb_mode_change(mode):
     State("wf-custom-buy",         "value"),
     State("wf-custom-sell",        "value"),
     State("wf-use-pit",            "value"),
+    State("wf-bear-filter",       "value"),
     prevent_initial_call=True,
 )
 def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
               is_mo, oos_mo, trade_size, slippage, commission, max_positions,
-              custom_buy, custom_sell, use_pit):
+              custom_buy, custom_sell, use_pit, bear_filter):
     _cleanup_stale_jobs()
     job_id = str(uuid.uuid4())
     _WF_JOBS[job_id] = {
@@ -696,7 +731,8 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
         target=_run_wf_thread,
         args=(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, slippage,
               int(max_positions or 0), commission),
-        kwargs={"custom_buy": custom_buy, "custom_sell": custom_sell, "use_pit": bool(use_pit or False)},
+        kwargs={"custom_buy": custom_buy, "custom_sell": custom_sell,
+                "use_pit": bool(use_pit or False), "bear_filter": bool(bear_filter or False)},
         daemon=True,
     ).start()
 
