@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 
-from data import get_cached
+from data import get_cached, load_stocks
 from backtest import run_backtest, calc_bt_metrics
 from config import STRATEGY_PRESETS, MIN_BARS_FOR_INDICATORS
 
@@ -96,6 +96,48 @@ def _sharpe_vec(equity_matrix: np.ndarray) -> np.ndarray:
     return mean_r / std_r
 
 
+def _collect_portfolio_trades(strategy, tickers, period, capital, slippage_pct, commission_pct):
+    """
+    對每隻 ticker 執行回測，收集所有交易按買入日期排序後返回。
+    返回 (returns_list, total_trades, ticker_count, failed_tickers)
+    失敗的股票靜默跳過並計入 failed_tickers。
+    """
+    preset = STRATEGY_PRESETS.get(strategy)
+    all_trades = []  # [(buy_date_dt, return_pct), ...]
+    failed = []
+
+    for tkr in tickers:
+        try:
+            df = get_cached(tkr, period)
+            if df.empty or len(df) < MIN_BARS_FOR_INDICATORS:
+                failed.append(tkr)
+                continue
+            trades, _, _ = run_backtest(
+                df,
+                buy_sigs=preset["buy"],
+                sell_sigs=preset["sell"],
+                trade_size=capital,
+                slippage_pct=slippage_pct,
+                commission_pct=commission_pct,
+                stop_loss_pct=preset.get("stop_loss_pct"),
+                take_profit_pct=preset.get("take_profit_pct"),
+                max_hold_days=preset.get("max_hold_days"),
+                min_hold_days=preset.get("min_hold_days"),
+                cooldown_days=preset.get("cooldown_days"),
+                ticker=tkr,
+                seasonal_filter=preset.get("seasonal_filter", False),
+            )
+            for t in trades:
+                all_trades.append((t["_buy_date"], t["回報%"]))
+        except Exception:
+            failed.append(tkr)
+
+    all_trades.sort(key=lambda x: x[0])
+    returns_list = [r for _, r in all_trades]
+    ticker_count = len(tickers) - len(failed)
+    return returns_list, len(returns_list), ticker_count, failed
+
+
 # ══════════════════════════════════════════════════════════════════
 # Layout
 # ══════════════════════════════════════════════════════════════════
@@ -105,6 +147,24 @@ layout = html.Div([
         "對歷史交易回報進行 Bootstrap 重採樣，評估策略在不同運氣組合下的統計穩健性。",
         className="text-muted small mb-3",
     ),
+
+    # ── 模式切換 ──────────────────────────────────────────────────
+    dbc.Row([
+        dbc.Col([
+            dcc.RadioItems(
+                id="mc-mode",
+                options=[
+                    {"label": "📈 單股模式",    "value": "single"},
+                    {"label": "📊 投資組合模式", "value": "portfolio"},
+                ],
+                value="single",
+                inline=True,
+                inputStyle={"marginRight": "6px"},
+                labelStyle={"marginRight": "20px", "cursor": "pointer"},
+                className="small",
+            ),
+        ], xs=12),
+    ], className="mb-2"),
 
     # ── 參數列 ────────────────────────────────────────────────────
     dbc.Row([
@@ -121,7 +181,18 @@ layout = html.Div([
         dbc.Col([
             html.Label("股票代碼", className="small text-muted mb-1 d-block"),
             dbc.Input(id="mc-ticker", value="0700.HK", type="text", size="sm"),
-        ], xs=6, md=2, className="mb-2"),
+        ], id="mc-ticker-col", xs=6, md=2, className="mb-2"),
+
+        dbc.Col([
+            html.Label("股票清單（逗號分隔，留空=全部）", className="small text-muted mb-1 d-block"),
+            dbc.Input(
+                id="mc-portfolio-tickers",
+                value="",
+                type="text",
+                size="sm",
+                placeholder="留空=全部 stocks.txt",
+            ),
+        ], id="mc-portfolio-col", xs=6, md=3, className="mb-2", style={"display": "none"}),
 
         dbc.Col([
             html.Label("週期", className="small text-muted mb-1 d-block"),
@@ -369,6 +440,43 @@ def toggle_guide(n, is_open):
 
 
 # ══════════════════════════════════════════════════════════════════
+# Callback：模式切換（顯示/隱藏輸入欄）
+# ══════════════════════════════════════════════════════════════════
+@callback(
+    Output("mc-ticker-col",    "style"),
+    Output("mc-portfolio-col", "style"),
+    Input("mc-mode", "value"),
+)
+def toggle_mode_ui(mode):
+    if mode == "portfolio":
+        return {"display": "none"}, {}
+    return {}, {"display": "none"}
+
+
+# ── Loading 提示（投資組合掃描中）────────────────────────────────
+dash.clientside_callback(
+    """
+    function(n_clicks, mode, portfolio_tickers) {
+        if (n_clicks && mode === 'portfolio') {
+            var s = (portfolio_tickers || '').trim();
+            if (s) {
+                var n = s.split(',').filter(function(t){ return t.trim(); }).length;
+                return '⏳ 正在掃描 ' + n + ' 隻股票，請稍候...';
+            }
+            return '⏳ 正在掃描全部股票，請稍候...';
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("mc-status", "children", allow_duplicate=True),
+    Input("mc-run-btn", "n_clicks"),
+    State("mc-mode", "value"),
+    State("mc-portfolio-tickers", "value"),
+    prevent_initial_call=True,
+)
+
+
+# ══════════════════════════════════════════════════════════════════
 # Callback：執行模擬
 # ══════════════════════════════════════════════════════════════════
 @callback(
@@ -381,60 +489,79 @@ def toggle_guide(n, is_open):
     State("mc-capital",  "value"),
     State("mc-slippage",    "value"),
     State("mc-commission",  "value"),
-    State("mc-nsim",        "value"),
-    State("mc-block-size",   "value"),
+    State("mc-nsim",             "value"),
+    State("mc-block-size",       "value"),
+    State("mc-mode",             "value"),
+    State("mc-portfolio-tickers","value"),
     prevent_initial_call=True,
 )
-def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commission, n_sim, block_size):
+def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commission, n_sim, block_size, mode, portfolio_tickers):
 
     # ── 參數清理 ──────────────────────────────────────────────────
-    ticker          = (ticker or "0700.HK").strip().upper()
     capital         = float(capital or 100_000)
     slippage_pct    = float(slippage or 0.10) / 100
     commission_pct  = float(commission or 0.26) / 100
     n_sim           = max(100, min(int(n_sim or 1000), 5000))
+    is_portfolio    = (mode == "portfolio")
 
     preset = STRATEGY_PRESETS.get(strategy)
     if not preset:
         return "⚠️ 找不到策略", []
 
-    # ── 取價格數據並執行回測 ──────────────────────────────────────
-    df = get_cached(ticker, period)
-    if df.empty:
-        return f"❌ 無法獲取 {ticker} 數據", []
-    if len(df) < MIN_BARS_FOR_INDICATORS:
-        return f"⚠️ {ticker} 數據不足（{len(df)} K線）", []
+    # ── 取得 returns（依模式分支）────────────────────────────────
+    ticker_count = None  # 投資組合模式使用
+    total_trades = None
 
-    try:
-        trades, _, _ = run_backtest(
-            df,
-            buy_sigs=preset["buy"],
-            sell_sigs=preset["sell"],
-            trade_size=capital,
-            slippage_pct=slippage_pct,
-            commission_pct=commission_pct,
-            stop_loss_pct=preset.get("stop_loss_pct"),
-            take_profit_pct=preset.get("take_profit_pct"),
-            max_hold_days=preset.get("max_hold_days"),
-            min_hold_days=preset.get("min_hold_days"),
-            cooldown_days=preset.get("cooldown_days"),
-            ticker=ticker,
-            seasonal_filter=preset.get("seasonal_filter", False),
+    if is_portfolio:
+        raw = (portfolio_tickers or "").strip()
+        tickers = (
+            [t.strip().upper() for t in raw.split(",") if t.strip()]
+            if raw else load_stocks()
         )
-    except Exception as e:
-        return f"❌ 回測失敗：{str(e)[:80]}", []
-
-    if not trades:
-        return "⚠️ 無交易記錄（策略條件未觸發），無法執行 Monte Carlo", []
-
-    returns = [t["回報%"] for t in trades]
-    n_trades = len(returns)
-
-    if n_trades < 5:
-        return (
-            f"⚠️ 交易筆數太少（{n_trades} 筆），需至少 5 筆才有統計意義",
-            [],
+        returns, total_trades, ticker_count, failed = _collect_portfolio_trades(
+            strategy, tickers, period, capital, slippage_pct, commission_pct
         )
+        if total_trades < 10:
+            return (
+                f"⚠️ 投資組合模式：僅收集到 {total_trades} 筆交易（需至少 10 筆），"
+                f"失敗股票 {len(failed)} 隻",
+                [],
+            )
+        n_trades = total_trades
+    else:
+        ticker = (ticker or "0700.HK").strip().upper()
+        df = get_cached(ticker, period)
+        if df.empty:
+            return f"❌ 無法獲取 {ticker} 數據", []
+        if len(df) < MIN_BARS_FOR_INDICATORS:
+            return f"⚠️ {ticker} 數據不足（{len(df)} K線）", []
+        try:
+            trades, _, _ = run_backtest(
+                df,
+                buy_sigs=preset["buy"],
+                sell_sigs=preset["sell"],
+                trade_size=capital,
+                slippage_pct=slippage_pct,
+                commission_pct=commission_pct,
+                stop_loss_pct=preset.get("stop_loss_pct"),
+                take_profit_pct=preset.get("take_profit_pct"),
+                max_hold_days=preset.get("max_hold_days"),
+                min_hold_days=preset.get("min_hold_days"),
+                cooldown_days=preset.get("cooldown_days"),
+                ticker=ticker,
+                seasonal_filter=preset.get("seasonal_filter", False),
+            )
+        except Exception as e:
+            return f"❌ 回測失敗：{str(e)[:80]}", []
+        if not trades:
+            return "⚠️ 無交易記錄（策略條件未觸發），無法執行 Monte Carlo", []
+        returns = [t["回報%"] for t in trades]
+        n_trades = len(returns)
+        if n_trades < 5:
+            return (
+                f"⚠️ 交易筆數太少（{n_trades} 筆），需至少 5 筆才有統計意義",
+                [],
+            )
 
     # ── 執行 MC 模擬 ───────────────────────────────────────────────
     np.random.seed(None)   # 每次隨機
@@ -550,11 +677,13 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
         annotation_font_color="#ef5350",
     )
 
+    curve_title = (
+        f"🎲 {n_sim} 次 Bootstrap 模擬 ─ {ticker_count} 隻股票 × {strategy}（{n_trades} 筆聚合交易）"
+        if is_portfolio else
+        f"🎲 {n_sim} 次 Bootstrap 模擬 ─ {ticker} × {strategy}（{n_trades} 筆歷史交易）"
+    )
     fig_curves.update_layout(
-        title=(
-            f"🎲 {n_sim} 次 Bootstrap 模擬 ─ "
-            f"{ticker} × {strategy} （{n_trades} 筆歷史交易）"
-        ),
+        title=curve_title,
         xaxis_title="累計交易次數",
         yaxis_title="資金 (HKD)",
         template="plotly_dark",
@@ -768,6 +897,11 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
         " block_size=0 時自動設為 sqrt(交易筆數)。",
         " 結果反映「在相同回報分布下，不同運氣排列」的統計範圍，",
         " 不能預測未來，但可評估策略的穩健性與尾部風險。",
+        html.Div(
+            f"投資組合模式：將 {ticker_count} 隻股票的歷史交易按時序合並後重採樣，"
+            "反映真實多股同時持倉的回報分布。",
+            className="mt-1",
+        ) if is_portfolio else None,
     ], color="secondary", className="small mt-4 mb-2")
 
     results = [
@@ -791,9 +925,15 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
         methodology_note,
     ]
 
-    status = (
-        f"✅ {ticker} × {strategy} | "
-        f"{n_trades} 筆歷史交易 | {n_sim:,} 次模擬完成 | "
-        f"破產率 {bankruptcy_rate:.1f}% | 虧損率 {loss_rate:.1f}% | block={actual_bs}"
-    )
+    if is_portfolio:
+        status = (
+            f"✅ 投資組合模式 | {ticker_count} 隻股票 | {total_trades} 筆交易 | "
+            f"{n_sim:,} 次模擬完成 | 破產率 {bankruptcy_rate:.1f}% | block={actual_bs}"
+        )
+    else:
+        status = (
+            f"✅ {ticker} × {strategy} | "
+            f"{n_trades} 筆歷史交易 | {n_sim:,} 次模擬完成 | "
+            f"破產率 {bankruptcy_rate:.1f}% | 虧損率 {loss_rate:.1f}% | block={actual_bs}"
+        )
     return status, results
