@@ -201,6 +201,12 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
 
 
 def _bar_chart(rows: list) -> go.Figure:
+    def _safe_num(v):
+        return v if isinstance(v, (int, float)) else None
+
+    def _safe_fmt(v):
+        return f"{v:+.1f}%" if isinstance(v, (int, float)) else str(v)
+
     labels = [
         f"Fold {r['Fold']}<br>{r['OOS 期間'].split(' → ')[0]}"
         + ("" if r["_valid_oos"] else " ⚠️")
@@ -209,21 +215,21 @@ def _bar_chart(rows: list) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Bar(
         name="In-Sample", x=labels,
-        y=[r["IS 均回報%"] for r in rows],
+        y=[_safe_num(r["IS 均回報%"]) for r in rows],
         marker_color=["rgba(100,180,255,0.7)" if r["_valid_oos"]
                       else "rgba(100,180,255,0.25)" for r in rows],
-        text=[f"{v:+.1f}%" for v in [r["IS 均回報%"] for r in rows]],
+        text=[_safe_fmt(r["IS 均回報%"]) for r in rows],
         textposition="outside",
     ))
     fig.add_trace(go.Bar(
         name="Out-of-Sample", x=labels,
-        y=[r["OOS 均回報%"] for r in rows],
+        y=[_safe_num(r["OOS 均回報%"]) for r in rows],
         marker_color=[
             ("#26a69a" if r["OOS 均回報%"] >= 0 else "#ef5350") if r["_valid_oos"]
             else "rgba(128,128,128,0.3)"
             for r in rows
         ],
-        text=[f"{v:+.1f}%" for v in [r["OOS 均回報%"] for r in rows]],
+        text=[_safe_fmt(r["OOS 均回報%"]) for r in rows],
         textposition="outside",
     ))
     fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
