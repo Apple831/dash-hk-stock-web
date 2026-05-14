@@ -7,7 +7,7 @@
 # 🔴-2 配套：對照組與 BIAS 策略移到 LEGACY_PRESETS（不參與制度矩陣 / 共振掃描）
 #   • cooldown 已在 backtest.py 解耦為獨立參數，預設不冷卻
 #   • 對照組 [無MIN對照] / [對照] / [BIAS-勿實盤] 不再參與實盤掃描，純歷史紀錄
-#   • 主要對外名 STRATEGY_PRESETS 仍保留，現等於 ACTIVE_PRESETS（向後相容）
+#   • 主要對外名 STRATEGY_PRESETS 仍保留,現等於 ACTIVE_PRESETS（向後相容）
 #
 # 新增策略欄位：cooldown_days（可選，獨立於 min_hold_days）
 #   • 不設 → 沿用 min_hold_days（v17 行為，向後相容）
@@ -52,6 +52,9 @@
 #   • 「🔬 相對強弱測試」及所有含 b9 的策略移至 LEGACY
 #   • 原因：熊市過濾後訊號過少，AND 邏輯疊加全部❌，放棄
 #   • ACTIVE_PRESETS 剩 7 個策略
+#
+# V18 三組信號測試（2026-05-14）：
+#   • 🔬 b12+b6 / 🔬 b11+b5 / 🔬 b3+b7+b8，待 scripts/test_new_strategies.py WF 驗證
 #
 # 每個策略 dict 欄位：
 #   desc            - UI 顯示的策略說明
@@ -138,6 +141,33 @@ ACTIVE_PRESETS = {
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
         "seasonal_filter": True,
+    },
+
+    # ── 8. 🔬 b12+b6 資金流向超賣（V18 信號測試）──────────────────
+    "🔬 b12+b6 資金流向超賣": {
+        "desc": "【🧪 測試中】b6（RSI<30）+ b12（資金流向 MA20下方大量陽燭）AND 進場，"
+                "s2（布林上軌）出場，MIN5。短週期反彈試驗，待 WF 驗證。",
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, True),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
+    },
+
+    # ── 9. 🔬 b11+b5 KDJ超賣布林雙確認（V18 信號測試）─────────────
+    "🔬 b11+b5 KDJ超賣布林雙確認": {
+        "desc": "【🧪 測試中】b5（布林下軌）+ b11（KDJ超賣金叉）AND 進場，"
+                "s8（KDJ高位死叉）出場，MIN5。雙重超賣確認試驗，待 WF 驗證。",
+        "buy":  (False, False, False, False, True,  False, False, False, False, False, True,  False),
+        "sell": (False, False, False, False, False, False, False, True),
+        "min_hold_days": 5,
+    },
+
+    # ── 10. 🔬 b3+b7+b8 底背離趨勢確認（V18 信號測試）─────────────
+    "🔬 b3+b7+b8 底背離趨勢確認": {
+        "desc": "【🧪 測試中】b3（底背離）+ b7（MACD金叉）+ b8（趨勢確認）AND 進場，"
+                "s5（RSI超買）+ s6（MACD死叉）OR 出場，MIN10。底背離+趨勢三重確認，待 WF 驗證。",
+        "buy":  (False, False, True,  False, False, False, True,  True,  False, False, False, False),
+        "sell": (False, False, False, False, True,  True,  False, False),
+        "min_hold_days": 10,
     },
 
 }
