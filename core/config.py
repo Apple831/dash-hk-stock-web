@@ -56,6 +56,9 @@
 # V18 三組信號測試（2026-05-14）：
 #   • 🔬 b12+b6 / 🔬 b11+b5 / 🔬 b3+b7+b8，待 scripts/test_new_strategies.py WF 驗證
 #
+# V18 WF 驗證結果（2026-05-14）：
+#   • 💎 b12+b6 資金流向超賣 PIT OOS +14.07% 5/5正Fold，升格為 💎 策略，加入 ACTIVE_PRESETS
+#
 # 每個策略 dict 欄位：
 #   desc            - UI 顯示的策略說明
 #   buy             - 12 個買入信號的 tuple (b1~b12)
@@ -68,7 +71,7 @@
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 #
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 7 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 11 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -168,6 +171,14 @@ ACTIVE_PRESETS = {
         "buy":  (False, False, True,  False, False, False, True,  True,  False, False, False, False),
         "sell": (False, False, False, False, True,  True,  False, False),
         "min_hold_days": 10,
+    },
+
+    # ── 11. 💎 b12+b6 資金流向超賣（WF 驗證通過）────────────────────
+    "💎 b12+b6 資金流向超賣": {
+        "desc": "WF驗證 PIT OOS+14.07% 5/5正Fold｜b12資金流向+b6RSI超賣雙確認｜出場布林上軌。",
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, True),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
     },
 
 }
