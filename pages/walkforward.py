@@ -173,6 +173,14 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
     ) if is_portfolio else None
 
     return [
+        *([
+            dbc.Alert(
+                "⚠️ PIT 股票池未啟用：當前 OOS 數字使用固定池（2026-05-14 的 183 隻），"
+                "可能高估 7-10%。建議開啟「🧬 PIT 股票池」重跑以獲得可信數字。",
+                color="warning",
+                className="mb-2",
+            )
+        ] if is_portfolio and not use_pit else []),
         dbc.Alert([
             html.Strong(f"{verdict} {mode_lbl}",
                         style={"fontSize": "1.1rem"}),
@@ -638,7 +646,7 @@ layout = html.Div([
             dbc.Switch(
                 id="wf-use-pit",
                 label="🧬 PIT 股票池（修正生存者偏差）",
-                value=False,
+                value=True,
             ),
         ], id="wf-pit-col", xs=12, md=3, className="mb-2",
            style={"display": "none"}),

@@ -8,6 +8,32 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 _PRICES_DIR = _PROJECT_ROOT / "data" / "eodhd_prices"
 
 
+def _check_data_freshness(cutoff: pd.Timestamp) -> None:
+    _prices_max_date = None
+    _sample_files = list(_PRICES_DIR.glob("*.json"))[:5]
+    for _f in _sample_files:
+        try:
+            import json as _json
+            _records = _json.loads(_f.read_text(encoding="utf-8"))
+            if _records:
+                _last = max(r["date"] for r in _records)
+                if _prices_max_date is None or _last > _prices_max_date:
+                    _prices_max_date = _last
+        except Exception:
+            pass
+
+    if _prices_max_date and cutoff > pd.Timestamp(_prices_max_date) + pd.Timedelta(days=90):
+        import warnings
+        warnings.warn(
+            f"[PIT WARN] EODHD 數據截至 {_prices_max_date}，"
+            f"但 fold cutoff 為 {cutoff.date()}，"
+            f"超出 90 天。此 fold 的 PIT 池子退化為準固定池，結果不可信。"
+            f"請執行 scripts/eodhd_incremental_update.py 補充數據。",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 def load_eodhd_prices(ticker: str) -> pd.DataFrame:
     """
     讀取 data/eodhd_prices/0700.HK.json
@@ -58,6 +84,8 @@ def get_historical_universe(
         return []
 
     cutoff = pd.Timestamp(date)
+    # ── PIT 數據新鮮度檢查 ──────────────────────────────────────
+    _check_data_freshness(cutoff)
     result = []
 
     for json_file in _PRICES_DIR.glob("*.json"):
@@ -99,6 +127,10 @@ def get_universe_cache(dates: list, **kwargs) -> dict:
     min_price = kwargs.get("min_price", 5.0)
     min_turnover_hkd = kwargs.get("min_turnover_hkd", 50_000_000)
     min_bars = kwargs.get("min_bars", 62)
+
+    # ── PIT 數據新鮮度檢查 ──────────────────────────────────────
+    if dates:
+        _check_data_freshness(pd.Timestamp(max(dates)))
 
     all_dfs = {}
     for json_file in _PRICES_DIR.glob("*.json"):

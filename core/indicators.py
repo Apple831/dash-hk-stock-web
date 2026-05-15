@@ -98,27 +98,10 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
 
     b8 = c["MA20"] > c["MA60"]
 
-    # DEPRECATED 2026-05-10，勿用於新策略（熊市過濾後訊號過少，AND邏輯疊加全部❌）
-    try:
-        from data import get_cached  # local import，避免模組頂層循環依賴
-        _hsi = get_cached("^HSI", "5y")
-    except Exception:
-        _hsi = pd.DataFrame()
-
-    if not _hsi.empty:
-        _hsi_r10 = _hsi["Close"].pct_change(10)
-        _stk_r10 = df["Close"].pct_change(10)
-        _l1 = (_hsi_r10 < -0.03).reindex(df.index).fillna(False)
-        _l2 = (_stk_r10 > _hsi_r10.reindex(df.index).fillna(0) * 0.7).fillna(False)
-        _hsi_up  = (_hsi["Close"] > _hsi["Close"].shift(1)).reindex(df.index).fillna(False)
-        _l3 = _hsi_up
-        _hsi_ma20 = _hsi["Close"].rolling(20).mean()
-        _hsi_ma60 = _hsi["Close"].rolling(60).mean()
-        _l4 = (_hsi_ma20 > _hsi_ma60).reindex(df.index).fillna(False)
-        b9 = (_l1 & _l2 & _l3 & _l4)
-    else:
-        close_52w_high = df["Close"].rolling(min(252, len(df)), min_periods=60).max().shift(1)
-        b9 = c["Close"] >= close_52w_high
+    # ── b9 DEPRECATED 2026-05-10 ────────────────────────────────
+    # 熊市過濾後訊號過少，AND 邏輯全部歸零，已永久廢棄。
+    # 禁止在此發出任何網絡請求（get_cached 已移除）。
+    b9 = pd.Series(False, index=df.index)
 
     in_uptrend = c["MA20"] > c["MA60"]
     near_ma20  = (c["Close"] >= c["MA20"] * 0.98) & (c["Close"] <= c["MA20"] * 1.03)
