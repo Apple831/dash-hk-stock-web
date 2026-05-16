@@ -17,7 +17,7 @@ import requests
 from data import load_stocks, get_stock_data
 from indicators import calculate_indicators, precompute_signals
 from regime import detect_regime
-from config import ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS
+from config import ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD
 
 
 def detect_hsi_regime() -> dict:
@@ -115,7 +115,7 @@ def main() -> int:
         sign = "+" if ma_gap_pct >= 0 else ""
 
         # ── 熊市閘門：不執行任何掃描 ──
-        if "熊" in bucket:
+        if label in BEAR_LABELS_HARD:
             print(f"[GATE] 熊市制度（{label}），不執行掃描", flush=True)
             send_telegram(
                 f"⛔ [制度閘門] 當前制度：{label}，全策略暫停，今日 0 個買入訊號"

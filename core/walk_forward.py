@@ -17,6 +17,7 @@ import plotly.graph_objects as go
 
 from indicators import calculate_indicators, precompute_signals
 from backtest import run_backtest, calc_bt_metrics, build_hsi_filter
+from config import BEAR_LABELS_HARD
 
 try:
     from historical_universe import get_universe_cache, load_eodhd_prices
@@ -422,7 +423,7 @@ def run_portfolio_walk_forward(
             _hsi_slice = _hsi_regime_df[_hsi_regime_df.index < oos_start_date]
             if len(_hsi_slice) >= 60:
                 _regime = _detect_regime(_hsi_slice)
-                if _regime.get("bucket") == "🔴 熊市":
+                if _regime.get("label") in BEAR_LABELS_HARD:
                     results.append({
                         "fold":                fold,
                         "is_start":            is_start_date,

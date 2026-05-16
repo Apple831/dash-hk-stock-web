@@ -396,7 +396,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
             return None, False, "⚠️ 請至少勾選一個買入訊號"
         if not custom_sell:
             return None, False, "⚠️ 請至少勾選一個賣出訊號"
-        buy_sigs        = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(12))
+        buy_sigs        = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(16))
         sell_sigs       = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
         min_hold        = None
         cooldown        = None
@@ -570,7 +570,7 @@ layout = html.Div([
                         id="wf-custom-buy",
                         options=[
                             {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
-                            for i in range(12)
+                            for i in range(16)
                         ],
                         value=[],
                         className="small",
@@ -653,9 +653,14 @@ layout = html.Div([
         _param_col("純滑點%",        "wf-slippage",    value=0.10,   step=0.01, min=0),
         _param_col("手續費%（雙邊）",  "wf-commission",  value=0.26,   step=0.01, min=0),
         dbc.Col([
-            html.Label("最大同時持倉數 (0=不限)", className="small text-muted mb-1 d-block"),
+            html.Label("每日新進場上限 (0=不限)", className="small text-muted mb-1 d-block"),
             dbc.Input(id="wf-max-positions", type="number", size="sm",
                       value=0, min=0, step=1),
+            html.Small(
+                "⚠️ 此參數限制每日新進場數量，非同時持倉總數上限",
+                className="text-warning",
+                style={"fontSize": "0.75rem"},
+            ),
         ], id="wf-max-pos-col", xs=6, md=2, className="mb-2",
            style={"display": "none"}),
         dbc.Col([

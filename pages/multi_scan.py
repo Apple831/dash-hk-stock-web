@@ -6,13 +6,13 @@ from collections import defaultdict
 
 from data import get_stock_data, get_cached, load_stocks
 from indicators import calculate_indicators, precompute_signals
-from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS, REGIME_RECOMMENDATIONS, MIN_BARS_FOR_INDICATORS
+from config import STRATEGY_PRESETS, ACTIVE_PRESETS, SELL_LABELS, REGIME_RECOMMENDATIONS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD
 from regime import detect_regime
 
 dash.register_page(__name__, path="/multi-scan", name="共振掃描")
 
 _REGIME_RECS      = REGIME_RECOMMENDATIONS
-_BEAR_LABELS      = {"弱熊市", "強熊市"}
+_BEAR_LABELS      = BEAR_LABELS_HARD
 _OSC_LABELS       = {"震盪市", "轉折期"}
 
 # ── Table 樣式（和其他 scan 頁一致）──────────────────────────────────
