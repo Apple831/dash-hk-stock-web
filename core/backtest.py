@@ -121,7 +121,7 @@ def run_backtest(
       ticker         : 股票代碼，用於 lot size 取整（可選）
     """
     # ── 🟡-4 V18: assert → ValueError ─────────────────────────────
-    if min_hold_days and max_hold_days and min_hold_days >= max_hold_days:
+    if min_hold_days and max_hold_days and min_hold_days > max_hold_days:
         raise ValueError(
             f"min_hold_days ({min_hold_days}) 必須小於 max_hold_days ({max_hold_days})"
         )

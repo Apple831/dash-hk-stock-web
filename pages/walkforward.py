@@ -85,10 +85,6 @@ FOLD_COLS = [
 ]
 
 
-# ── 殭屍 job 清理 ────────────────────────────────────────────────────
-def _cleanup_stale_jobs(max_age: int = 1800) -> None:
-    pass
-
 
 # ── 核心工具函式 ──────────────────────────────────────────────────────
 def _degradation(is_ret: float, oos_ret: float):
@@ -186,6 +182,11 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
         className="text-muted",
     ) if is_portfolio else None
 
+    _pit_low_folds = sum(
+        1 for r in rows
+        if isinstance(r.get("股票數"), (int, float)) and r.get("股票數") < 20
+    ) if (is_portfolio and use_pit) else 0
+
     return [
         *([
             dbc.Alert(
@@ -195,6 +196,14 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
                 className="mb-2",
             )
         ] if is_portfolio and not use_pit else []),
+        *([
+            dbc.Alert(
+                f"⚠️ 有 {_pit_low_folds} 個 Fold 的 PIT 股票池少於 20 隻，統計可靠度偏低。"
+                "可能原因：EODHD 數據未覆蓋該時段，建議補充 data/eodhd_prices/ 資料。",
+                color="warning",
+                className="mb-2",
+            )
+        ] if _pit_low_folds > 0 else []),
         dbc.Alert([
             html.Strong(f"{verdict} {mode_lbl}",
                         style={"fontSize": "1.1rem"}),
@@ -755,7 +764,6 @@ def cb_mode_change(mode):
 def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
               is_mo, oos_mo, trade_size, slippage, commission, max_positions,
               custom_buy, custom_sell, use_pit, bear_filter):
-    _cleanup_stale_jobs()
     job_id = str(uuid.uuid4())
     _job_set(job_id, {
         "status": "running", "fold": 0, "total_folds": 0,

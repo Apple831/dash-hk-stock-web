@@ -184,7 +184,6 @@ def fetch_stocks_from_tradingview(
     min_cap_hkd: int = 10_000_000_000,
     min_vol_hkd: int = 50_000_000,
     min_price_hkd: float = 5.0,
-    min_roe_pct: float = 8.0,
 ) -> list:
     payload = {
         "filter": [

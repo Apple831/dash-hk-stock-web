@@ -195,6 +195,11 @@ layout = html.Div([
         className="text-warning d-block mb-3",
         style={"fontSize": "0.8rem"},
     ),
+    html.Small(
+        "ℹ️ 掃描使用 AND 邏輯（所有訊號同時觸發）；回測引擎使用 OR 邏輯（任一訊號即出場），兩者行為不同",
+        className="text-info d-block mb-3",
+        style={"fontSize": "0.78rem"},
+    ),
 
     # 自定義賣出訊號面板（選「✏️ 自定義」時顯示）
     html.Div(

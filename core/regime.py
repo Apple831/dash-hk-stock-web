@@ -42,7 +42,7 @@ def detect_regime(df: pd.DataFrame) -> dict:
             label, bucket, color = "震盪市",  "🟡 震盪市", "warning"
         else:
             label, bucket, color = "轉折期",  "🟡 震盪市", "info"
-    elif ma_gap_pct > 2.0:
+    elif ma_gap_pct >= 2.0:
         if macd_pct > 0.5:
             label, bucket, color = "強牛市",  "🟢 牛市", "success"
         elif macd_pct > 0:
@@ -94,7 +94,7 @@ def regime_history(df: pd.DataFrame, n_bars: int = 120) -> list:
 
         if abs(mg) < 2.0:
             label, color = ("震盪市", "warning") if cv > 2.0 else ("轉折期", "info")
-        elif mg > 2.0:
+        elif mg >= 2.0:
             if mp > 0.5:  label, color = "強牛市",  "success"
             elif mp > 0:  label, color = "弱牛市",  "success"
             else:         label, color = "牛市警惕","warning"

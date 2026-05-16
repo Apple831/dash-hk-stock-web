@@ -10,7 +10,9 @@ _PRICES_DIR = _PROJECT_ROOT / "data" / "eodhd_prices"
 
 def _check_data_freshness(cutoff: pd.Timestamp) -> None:
     _prices_max_date = None
-    _sample_files = list(_PRICES_DIR.glob("*.json"))[:5]
+    import random
+    all_files = list(_PRICES_DIR.glob("*.json"))
+    _sample_files = random.sample(all_files, min(20, len(all_files)))
     for _f in _sample_files:
         try:
             import json as _json

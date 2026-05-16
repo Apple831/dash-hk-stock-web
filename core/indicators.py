@@ -7,6 +7,16 @@ import pandas as pd
 
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    # 異常 bar 遮蔽：用前值填充，避免污染 EMA 但保留時序
+    if "is_anomaly" in df.columns:
+        anomaly_mask = df["is_anomaly"].fillna(False)
+        if anomaly_mask.any():
+            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                if col in df.columns:
+                    df.loc[anomaly_mask, col] = None
+            df[["Open", "High", "Low", "Close", "Volume"]] = (
+                df[["Open", "High", "Low", "Close", "Volume"]].ffill()
+            )
     df["MA5"]  = df["Close"].rolling(5).mean()
     df["MA10"] = df["Close"].rolling(10).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
