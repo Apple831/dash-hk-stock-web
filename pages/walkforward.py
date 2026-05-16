@@ -7,11 +7,31 @@ from dash import html, dcc, dash_table, callback, Output, Input, State, no_updat
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
+import cache_store as _cs
 
-# ⚠️ _WF_JOBS 是 in-process 存儲。gunicorn 多 worker 時需改用 diskcache。
-# 目前 Procfile 只有 1 worker，暫時安全。升級前必須先重構。
-_WF_JOBS: dict = {}  # job_id → {status, fold, total_folds, current, result, created_at, ...}
-_WF_JOBS_LOCK = threading.Lock()
+def _job_get(job_id: str) -> dict | None:
+    try:
+        return _cs.dc.get("wf_job_" + job_id)
+    except Exception:
+        return None
+
+def _job_set(job_id: str, data: dict) -> None:
+    try:
+        _cs.dc.set("wf_job_" + job_id, data, expire=3600)
+    except Exception:
+        pass
+
+def _job_delete(job_id: str) -> None:
+    try:
+        _cs.dc.delete("wf_job_" + job_id)
+    except Exception:
+        pass
+
+def _job_count() -> int:
+    try:
+        return len([k for k in _cs.dc if str(k).startswith("wf_job_")])
+    except Exception:
+        return 0
 
 from data import get_cached, load_stocks
 from indicators import calculate_indicators
@@ -67,13 +87,7 @@ FOLD_COLS = [
 
 # ── 殭屍 job 清理 ────────────────────────────────────────────────────
 def _cleanup_stale_jobs(max_age: int = 1800) -> None:
-    now = time.time()
-    with _WF_JOBS_LOCK:
-        stale = [jid for jid, j in _WF_JOBS.items()
-                 if now - j.get("created_at", now) > max_age]
-        for jid in stale:
-            print(f"[WF] cleanup stale job={jid[:8]}")
-            _WF_JOBS.pop(jid, None)
+    pass
 
 
 # ── 核心工具函式 ──────────────────────────────────────────────────────
@@ -466,11 +480,14 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
     print(f"[WF] Thread start  job={short} mode={mode} ticker={ticker}")
     try:
         def progress_cb(fold, total_folds, current):
-            if job_id in _WF_JOBS:
-                _WF_JOBS[job_id]["fold"]        = fold
-                _WF_JOBS[job_id]["total_folds"] = total_folds
-                _WF_JOBS[job_id]["current"]     = current or ""
-                print(f"[WF] Progress  job={short} fold={fold}/{total_folds} cur={current}")
+            existing = _job_get(job_id) or {}
+            existing.update({
+                "fold": fold,
+                "total_folds": total_folds,
+                "current": current or "",
+            })
+            _job_set(job_id, existing)
+            print(f"[WF] Progress  job={short} fold={fold}/{total_folds} cur={current}")
 
         wf_results, is_portfolio, err = _run_wf(
             mode, strategy, ticker, total_period,
@@ -485,12 +502,12 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
         )
         n = len(wf_results) if wf_results else 0
         print(f"[WF] Thread done   job={short} results={n} err={err}")
-        _WF_JOBS[job_id] = {
+        _job_set(job_id, {
             "status":       "done",
             "result":       wf_results,
             "is_portfolio": is_portfolio,
             "error":        err,
-            "created_at":   _WF_JOBS.get(job_id, {}).get("created_at", time.time()),
+            "created_at":   (_job_get(job_id) or {}).get("created_at", time.time()),
             "params": {
                 "strategy":      strategy,
                 "ticker":        ticker or "0700.HK",
@@ -501,15 +518,15 @@ def _run_wf_thread(job_id, mode, strategy, ticker, total_period, is_mo, oos_mo, 
                 "use_pit":       use_pit,
                 "bear_filter":   bear_filter,
             },
-        }
+        })
     except Exception as e:
         print(f"[WF] Thread ERROR  job={short}: {e}\n{traceback.format_exc()}")
-        _WF_JOBS[job_id] = {
+        _job_set(job_id, {
             "status": "done", "result": None,
             "is_portfolio": False,
             "error": f"❌ 執行失敗：{e}", "params": {},
-            "created_at": _WF_JOBS.get(job_id, {}).get("created_at", time.time()),
-        }
+            "created_at": (_job_get(job_id) or {}).get("created_at", time.time()),
+        })
 
 
 # ── Layout ───────────────────────────────────────────────────────────
@@ -735,10 +752,10 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
               custom_buy, custom_sell, use_pit, bear_filter):
     _cleanup_stale_jobs()
     job_id = str(uuid.uuid4())
-    _WF_JOBS[job_id] = {
+    _job_set(job_id, {
         "status": "running", "fold": 0, "total_folds": 0,
         "current": "初始化...", "created_at": time.time(),
-    }
+    })
     print(f"[WF] cb_run_wf    job={job_id[:8]} mode={mode} ticker={ticker} strategy={strategy}")
 
     threading.Thread(
@@ -770,19 +787,19 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
 )
 def cb_poll_progress(n_intervals, job_id):
     short = (job_id[:8] + "...") if job_id else "None"
-    in_jobs = job_id in _WF_JOBS if job_id else False
-    print(f"[WF] cb_poll       n={n_intervals} job={short} in_jobs={in_jobs} total_jobs={len(_WF_JOBS)}")
+    in_jobs = _job_get(job_id) is not None if job_id else False
+    print(f"[WF] cb_poll       n={n_intervals} job={short} in_jobs={in_jobs} total_jobs={_job_count()}")
 
     if not job_id:
         # no active job at all → stop interval
         return no_update, True, no_update, no_update
 
-    if job_id not in _WF_JOBS:
+    if _job_get(job_id) is None:
         # job not registered yet (race condition) → keep polling, do NOT stop
         print(f"[WF] cb_poll       job={short} not found yet, keep polling")
         return no_update, False, no_update, no_update
 
-    job = _WF_JOBS[job_id]
+    job = _job_get(job_id)
 
     if job["status"] == "running":
         fold    = job.get("fold", 0)
@@ -805,7 +822,8 @@ def cb_poll_progress(n_intervals, job_id):
 
     # ── 完成 ──────────────────────────────────────────────────────────
     print(f"[WF] cb_poll DONE  job={short}, rendering results")
-    job_data     = _WF_JOBS.pop(job_id, {})
+    job_data = _job_get(job_id) or {}
+    _job_delete(job_id)
     wf_results   = job_data.get("result")
     is_portfolio = job_data.get("is_portfolio", False)
     err          = job_data.get("error")

@@ -124,6 +124,57 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
         (c["Close"] > c["Open"])
     )
 
+    # ── b13: 縮量後放量陽線（賣壓枯竭反轉）─────────────────────
+    # 放寬：2天縮量（原3天）+ 放量降至1.2x（原1.5x）
+    b13 = (
+        (df["Volume"].shift(1) < df["Volume"].shift(2)) &
+        (c["Volume"] > vol_ma * 1.2) &
+        (c["Close"] > c["Open"]) &
+        (c["Close"] < c["MA20"]) &
+        (c["RSI"] < 40)
+    )
+
+    # ── b14: 低位半吞噬形態（強力買入確認）──────────────────────
+    # 放寬：今收 >= 昨開昨收中點（原完整吞噬）+ 放量降至1.2x（原1.5x）
+    b14 = (
+        (p["Close"] < p["Open"]) &
+        (c["Close"] > c["Open"]) &
+        (c["Open"] <= p["Close"]) &
+        (c["Close"] >= (p["Open"] + p["Close"]) / 2) &
+        (c["Volume"] > vol_ma * 1.2) &
+        (c["Close"] < c["MA20"])
+    )
+
+
+    # ── b15: 長下影線（低位支撐確認）────────────────────────────
+    # 放寬：下影線 > 0.8%（原1.5%）
+    _lower_shadow = df[["Open", "Close"]].min(axis=1) - df["Low"]
+    _body_size    = (df["Close"] - df["Open"]).abs()
+    _mid_price    = (df["High"] + df["Low"]) / 2
+    b15 = (
+        (_lower_shadow > _body_size * 2) &
+        (_lower_shadow > df["Close"] * 0.008) &
+        (df["Close"] > _mid_price) &
+        (c["Close"] < c["MA20"]) &
+        (c["Volume"] > vol_ma * 1.0)
+    )
+
+    # ── b16: 長下影線+資金流入（b15 形態 + 放量確認，量門檻放寬）────
+    # 與 b15+b12 AND 的差別：量下限從 2x 降至 1.5x，上限從 8x 放寬至 12x
+    # 原因：b15 下影線當日往往是恐慌性拋售後拉回，量不一定達到 2x
+    _lower_shadow_b16 = df[["Open", "Close"]].min(axis=1) - df["Low"]
+    _body_size_b16    = (df["Close"] - df["Open"]).abs()
+    _mid_price_b16    = (df["High"] + df["Low"]) / 2
+    b16 = (
+        (_lower_shadow_b16 > _body_size_b16 * 2) &
+        (_lower_shadow_b16 > df["Close"] * 0.008) &
+        (df["Close"] > _mid_price_b16) &
+        (c["Close"] < c["MA20"]) &
+        (c["Volume"] > vol_ma * 1.5) &
+        (c["Volume"] < vol_ma * 12) &
+        (c["Close"] > c["Open"])
+    )
+
     # ── 賣出訊號 ──────────────────────────────────────────────────
     close_ma10u = df["Close"].rolling(10).mean().shift(1)
     ma60_ma10u  = df["MA60"].rolling(10).mean().shift(1)
@@ -164,6 +215,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
     for name, s in [("b1",b1),("b2",b2),("b3",b3),("b4",b4),("b5",b5),
                     ("b6",b6),("b7",b7),("b8",b8),("b9",b9),("b10",b10),
                     ("b11",b11),("b12",b12),
+                    ("b13",b13),("b14",b14),("b15",b15),("b16",b16),
                     ("s1",s1),("s2",s2),("s3",s3),("s4",s4),
                     ("s5",s5),("s6",s6),("s7",s7),("s8",s8)]:
         sigs[name] = s.fillna(False) & ~mask
