@@ -51,7 +51,7 @@ def _signal_item(name: str, detail: str, triggered: bool, kind: str):
     ], className="mb-2")
 
 
-def _verdict_card(buy_n: int, sell_n: int) -> dbc.Alert:
+def _verdict_card(buy_n: int, sell_n: int, buy_total: int = 16) -> dbc.Alert:
     if buy_n >= 3 and buy_n > sell_n:
         text, color = "偏多",   "success"
     elif buy_n >= 1 and buy_n > sell_n:
@@ -68,7 +68,7 @@ def _verdict_card(buy_n: int, sell_n: int) -> dbc.Alert:
             html.Span("綜合判定：", className="fw-bold me-2"),
             dbc.Badge(text, color=color, className="fs-6 px-3 py-1"),
             html.Small(
-                f"  買入 {buy_n}/11 觸發 ｜ 賣出 {sell_n}/8 觸發",
+                f"  買入 {buy_n}/{buy_total} 觸發 ｜ 賣出 {sell_n}/8 觸發",
                 className="ms-3 text-muted",
             ),
         ],
@@ -155,7 +155,7 @@ def _build_result(ticker: str, period: str):
     buy_n = sum(1 for _, _, t in sigs["buy"]  if t)
     sel_n = sum(1 for _, _, t in sigs["sell"] if t)
 
-    verdict = _verdict_card(buy_n, sel_n)
+    verdict = _verdict_card(buy_n, sel_n, buy_total=len(sigs["buy"]))
 
     # ── 指標卡片（6張）──────────────────────────────────────────────
     cards = dbc.Row([
@@ -169,8 +169,8 @@ def _build_result(ticker: str, period: str):
 
     # ── 訊號列表（觸發/未觸發分開）───────────────────────────────────
     signals_row = dbc.Row([
-        _signal_col(sigs["buy"],  "buy",  "🟢 買入訊號", 11),
-        _signal_col(sigs["sell"], "sell", "🔴 賣出訊號",  8),
+        _signal_col(sigs["buy"],  "buy",  "🟢 買入訊號", len(sigs["buy"])),
+        _signal_col(sigs["sell"], "sell", "🔴 賣出訊號",  len(sigs["sell"])),
     ], className="mb-2")
 
     # ── K 線圖 ───────────────────────────────────────────────────────

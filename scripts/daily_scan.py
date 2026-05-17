@@ -17,7 +17,7 @@ import requests
 from data import load_stocks, get_stock_data
 from indicators import calculate_indicators, precompute_signals
 from regime import detect_regime
-from config import ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD
+from config import ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD, REGIME_RECOMMENDATIONS
 
 
 def detect_hsi_regime() -> dict:
@@ -29,7 +29,10 @@ def detect_hsi_regime() -> dict:
     return result if result else {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0}
 
 
-def scan_all(presets: dict | None = None) -> list[dict]:
+def scan_all(presets: dict | None = None, current_month: int | None = None) -> list[dict]:
+    if current_month is None:
+        from datetime import datetime, timezone, timedelta
+        current_month = datetime.now(timezone(timedelta(hours=8))).month
     active = presets if presets is not None else ACTIVE_PRESETS
     preset_active = {
         name: [f"b{i+1}" for i, v in enumerate(p["buy"]) if v]
@@ -42,15 +45,18 @@ def scan_all(presets: dict | None = None) -> list[dict]:
 
     for ticker in tickers:
         try:
-            raw = get_stock_data(ticker, "3mo")
+            raw = get_stock_data(ticker, "6mo")
             if raw.empty or len(raw) < MIN_BARS_FOR_INDICATORS:
                 continue
             df = calculate_indicators(raw)
             sigs = precompute_signals(df)
 
             matched = []
+            active_cfg = presets if presets is not None else ACTIVE_PRESETS
             for name, active_sigs in preset_active.items():
                 if not active_sigs:
+                    continue
+                if active_cfg.get(name, {}).get("seasonal_filter") and current_month not in [1, 4, 10]:
                     continue
                 if all(bool(sigs[b].iloc[-1]) for b in active_sigs):
                     matched.append(name)
@@ -122,15 +128,19 @@ def main() -> int:
             )
             return 0
 
-        # ── 震盪市：只掃描「均值回歸」策略 ──
-        if "震盪" in bucket:
-            filtered = {k: v for k, v in ACTIVE_PRESETS.items() if "均值回歸" in k}
-            hits = scan_all(presets=filtered)
-            prefix = "⚠️ 震盪市：只推送保守策略"
-        else:
-            # 牛市：全策略正常掃描
-            hits = scan_all()
+        FULL_SCAN_LABELS = {"強牛市", "弱牛市"}
+        if label in FULL_SCAN_LABELS:
+            hits = scan_all(current_month=hkt_now.month)
             prefix = ""
+        else:
+            rec_names = REGIME_RECOMMENDATIONS.get(label, [])
+            if rec_names:
+                filtered = {k: v for k, v in ACTIVE_PRESETS.items() if k in rec_names}
+                hits = scan_all(presets=filtered, current_month=hkt_now.month)
+                prefix = f"⚠️ {label}：只推送推薦策略（{len(filtered)} 個）"
+            else:
+                hits = []
+                prefix = f"⚠️ {label}：無推薦策略"
 
         regime_header = f"🌍 恒指制度：{label} | MA缺口 {sign}{ma_gap_pct:.1f}% | 今日掃描 {len(hits)} 隻"
 

@@ -88,6 +88,22 @@ def evaluate_signals(df: pd.DataFrame) -> dict:
          f"收盤={c['Close']:.2f}  MA20={c['MA20']:.2f}  "
          f"量比={c['Volume']/vol_avg:.1f}x（需2-8倍均量，且陽線）",
          last["b12"]),
+        ("⑬ 縮量反轉（前2天縮量+今放量陽線）",
+         f"前1日量比={df['Volume'].iloc[-2]/vol_avg:.1f}x  前2日量比={df['Volume'].iloc[-3]/vol_avg:.1f}x  "
+         f"今量比={c['Volume']/vol_avg:.1f}x  RSI={c['RSI']:.1f}（需RSI<40，MA20下方）",
+         last["b13"]),
+        ("⑭ 低位半吞噬（昨陰今陽過中點+放量+MA20下方）",
+         f"昨={'陰' if p['Close']<p['Open'] else '陽'}  今={'陽' if c['Close']>c['Open'] else '陰'}  "
+         f"今開={c['Open']:.2f}  昨收={p['Close']:.2f}  量比={c['Volume']/vol_avg:.1f}x",
+         last["b14"]),
+        ("⑮ 長下影線（下影>實體2倍+收高於中點+MA20下方）",
+         f"下影={max(0, min(c['Open'],c['Close'])-c['Low']):.3f}  "
+         f"實體={abs(c['Close']-c['Open']):.3f}  "
+         f"中點={(c['High']+c['Low'])/2:.2f}  收盤={c['Close']:.2f}",
+         last["b15"]),
+        ("⑯ 下影線資金流入（b15形態+量1.5-12倍陽燭）",
+         f"下影>實體2倍且>股價0.8%，收高於日內中點，量比={c['Volume']/vol_avg:.1f}x（需1.5-12倍，陽燭）",
+         last["b16"]),
     ]
 
     pct_chg = (c["Close"] - p["Close"]) / p["Close"] * 100

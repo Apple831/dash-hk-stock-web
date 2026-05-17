@@ -185,6 +185,29 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
         (c["Close"] > c["Open"])
     )
 
+    # ── b17: 5日ROC超跌反彈 ────────────────────────────────
+    # 5天跌速異常（ROC5 < -8%），今日陽燭初步反轉
+    # 與 b6 RSI超賣互補：捕捉急跌但 RSI 未到30的情境
+    roc5 = (df["Close"] - df["Close"].shift(5)) / df["Close"].shift(5) * 100
+    b17 = (
+        (roc5 < -8) &
+        (c["Close"] < c["MA20"]) &
+        (c["RSI"] < 45) &
+        (c["Close"] > c["Open"])
+    )
+
+    # ── b18: Z-Score 資金流向（b12 升級版）──────────────────
+    # 用標準差衡量成交量異常，自動適應不同股票的量能波動率
+    # Z = (今日量 - 20日均量) / 20日標準差
+    vol_std = df["Volume"].rolling(20).std().replace(0, float("nan"))
+    vol_z = (df["Volume"] - vol_ma) / vol_std
+    b18 = (
+        (c["Close"] < c["MA20"]) &
+        (vol_z > 2.0) &
+        (vol_z < 5.0) &
+        (c["Close"] > c["Open"])
+    )
+
     # ── 賣出訊號 ──────────────────────────────────────────────────
     close_ma10u = df["Close"].rolling(10).mean().shift(1)
     ma60_ma10u  = df["MA60"].rolling(10).mean().shift(1)
@@ -226,6 +249,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
                     ("b6",b6),("b7",b7),("b8",b8),("b9",b9),("b10",b10),
                     ("b11",b11),("b12",b12),
                     ("b13",b13),("b14",b14),("b15",b15),("b16",b16),
+                    ("b17",b17),("b18",b18),
                     ("s1",s1),("s2",s2),("s3",s3),("s4",s4),
                     ("s5",s5),("s6",s6),("s7",s7),("s8",s8)]:
         sigs[name] = s.fillna(False) & ~mask

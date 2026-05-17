@@ -18,7 +18,7 @@ app = dash.Dash(
 )
 
 navbar = dbc.NavbarSimple(
-    brand="🏹 港股狙擊手 V19",
+    brand="🏹 港股狙擊手 V20",
     brand_href="/",
     color="dark",
     dark=True,

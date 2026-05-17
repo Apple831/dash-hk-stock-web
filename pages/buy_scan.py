@@ -122,6 +122,16 @@ def _scan(strategy_name: str, custom_buy: list = None) -> tuple[list, str]:
     if not buy_active:
         return [], "⚠️ 策略未設定任何買入信號"
 
+    if strategy_name != PRESET_CUSTOM:
+        preset_cfg = STRATEGY_PRESETS.get(strategy_name, {})
+        if preset_cfg.get("seasonal_filter"):
+            from datetime import datetime, timezone, timedelta
+            current_month = datetime.now(timezone(timedelta(hours=8))).month
+            if current_month not in [1, 4, 10]:
+                results = []
+                status = f"⚠️ 「{strategy_name}」設有季節性過濾，目前非 1/4/10 月，不觸發訊號"
+                return results, status
+
     tickers = load_stocks()
     results, errors = [], 0
 

@@ -176,6 +176,11 @@ def _resonance_scan(strategy_names: list, lookback_days: int = 1) -> tuple[list,
                     continue
                 buy_sigs = preset.get("buy", ())
                 active   = [f"b{i+1}" for i, v in enumerate(buy_sigs) if v]
+                if preset.get("seasonal_filter"):
+                    from datetime import datetime, timezone, timedelta
+                    current_month = datetime.now(timezone(timedelta(hours=8))).month
+                    if current_month not in [1, 4, 10]:
+                        continue
                 if active:
                     d = _days_ago(sigs, active, lookback_days)
                     if d >= 0:
