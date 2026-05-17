@@ -167,6 +167,7 @@ def batch_download(tickers: list, period: str = "1y") -> dict:
                 df = flatten_columns(df)
                 df = normalize_index(df)
                 df = df.dropna(subset=["Close"])
+                df = filter_anomalies(df)  # 與 get_stock_data 一致，清洗停牌復牌/拆股異常 bar，避免污染指標
                 if len(df) < 60:
                     continue
                 cache[ticker] = calculate_indicators(df)

@@ -293,15 +293,7 @@ def run_backtest(
                     "_win": pnl_pct > 0,
                 })
 
-                # ── 🟡-3 V18: 平倉後重置 cooldown ──────────────────
-                # 如果這個部位是「最近一次進場」，把 last_entry_idx 改為平倉日，
-                # 讓冷卻期從平倉日重算（避免「30 天前買、5 天止損 → 仍冷卻 25 天」）
-                if pos["entry_idx"] == last_entry_idx:
-                    # 平倉日 = i（止損/止盈）或 i+1（策略 sell / 超時）
-                    if reason in ("策略訊號",) or reason.startswith("超時"):
-                        last_entry_idx = i + 1 if i + 1 < n else i
-                    else:
-                        last_entry_idx = i
+                # cooldown 從進場日起算（標準語意），平倉不重置計時
             else:
                 keep.append(pos)
         positions = keep

@@ -318,17 +318,28 @@ def _build_portfolio_equity(
 
 
 def _apply_max_positions(trades: list, max_pos: int) -> list:
-    """Per-buy-date cap: on any given day keep only the first max_pos new entries (alphabetically)."""
+    """
+    真實同時持倉上限：在任意買入時間點，
+    若當前已有 max_pos 個持倉未平，則跳過此筆新進場。
+    持倉判斷：_buy_date <= buy_date 且 _sell_date > buy_date
+    """
     if not max_pos or max_pos <= 0:
         return trades
-    from collections import defaultdict
-    by_date: dict = defaultdict(list)
-    for t in trades:
-        by_date[t["_buy_date"]].append(t)
+
+    # 按買入日期排序，確保先到先得
+    sorted_trades = sorted(trades, key=lambda t: (t["_buy_date"], t.get("ticker", "")))
+
     result = []
-    for date in sorted(by_date):
-        day_trades = sorted(by_date[date], key=lambda t: t.get("ticker", ""))
-        result.extend(day_trades[:max_pos])
+    for trade in sorted_trades:
+        buy_date  = trade["_buy_date"]
+        # 計算此刻已有多少持倉仍開著
+        open_count = sum(
+            1 for t in result
+            if t["_buy_date"] <= buy_date and t["_sell_date"] > buy_date
+        )
+        if open_count < max_pos:
+            result.append(trade)
+
     return result
 
 
@@ -346,7 +357,7 @@ def run_portfolio_walk_forward(
     max_hold_days: int = None,
     min_hold_days: int = None,
     cooldown_days: int = None,          # 🔴-2 V18 透傳
-    max_concurrent_positions: int = None,  # 🟡-7 同時持倉上限（None=不限）
+    max_concurrent_positions: int = None,  # 任意時間點同時持倉上限（None=不限）
     min_oos_trades: int = 5,
     hsi_filter: pd.Series = None,
     extra_buy_sigs: tuple = None,

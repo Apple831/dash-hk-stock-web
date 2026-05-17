@@ -220,6 +220,12 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
             _mc("OOS 正回報 Fold", f"{oos_pos}/{len(valid_rows)}"),
             _mc("有效 Fold",       f"{len(valid_rows)}/{len(rows)}"),
         ], className="g-2 mb-3"),
+        html.Small(
+            "ℹ️ WF 採固定倉位模式（每筆各用 trade_size 獨立試驗），"
+            "OOS 均回報% 為各筆平均，非複利累計回報",
+            className="text-muted d-block mb-2",
+            style={"fontSize": "0.78rem"},
+        ),
         *([capital_note] if capital_note else []),
         *([
             html.Div([
@@ -405,7 +411,7 @@ def _run_wf(mode, strategy, ticker, total_period, is_mo, oos_mo, trade_size, sli
             return None, False, "⚠️ 請至少勾選一個買入訊號"
         if not custom_sell:
             return None, False, "⚠️ 請至少勾選一個賣出訊號"
-        buy_sigs        = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(16))
+        buy_sigs        = tuple(f"b{i+1}" in (custom_buy  or []) for i in range(len(BUY_LABELS)))
         sell_sigs       = tuple(f"s{i+1}" in (custom_sell or []) for i in range(8))
         min_hold        = None
         cooldown        = None
@@ -579,7 +585,7 @@ layout = html.Div([
                         id="wf-custom-buy",
                         options=[
                             {"label": f" {BUY_LABELS[i]}", "value": f"b{i+1}"}
-                            for i in range(16)
+                            for i in range(len(BUY_LABELS))
                         ],
                         value=[],
                         className="small",
@@ -662,11 +668,11 @@ layout = html.Div([
         _param_col("純滑點%",        "wf-slippage",    value=0.10,   step=0.01, min=0),
         _param_col("手續費%（雙邊）",  "wf-commission",  value=0.26,   step=0.01, min=0),
         dbc.Col([
-            html.Label("每日新進場上限 (0=不限)", className="small text-muted mb-1 d-block"),
+            html.Label("同時持倉上限 (0=不限)", className="small text-muted mb-1 d-block"),
             dbc.Input(id="wf-max-positions", type="number", size="sm",
                       value=0, min=0, step=1),
             html.Small(
-                "⚠️ 此參數限制每日新進場數量，非同時持倉總數上限",
+                "限制任意時間點的同時持倉總數，超過上限的新訊號當日跳過",
                 className="text-warning",
                 style={"fontSize": "0.75rem"},
             ),
