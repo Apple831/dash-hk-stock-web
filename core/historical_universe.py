@@ -62,10 +62,20 @@ def load_eodhd_prices(ticker: str) -> pd.DataFrame:
             'volume': 'Volume',
             'adjusted_close': 'Adj Close',
         }, inplace=True)
+        # EODHD 的 OHLC 為未復權原始價，只有 adjusted_close 已復權。
+        # 直接用原始 OHLC 算 EMA/RSI/布林帶，會在拆股/派息日出現假跳空，指標失真數十天。
+        # 用 factor = Adj Close / Close 把 OHLC 全部縮放到復權基準，volume 不調整。
+        if "Adj Close" in df.columns:
+            factor = df["Adj Close"] / df["Close"]
+            for _col in ["Open", "High", "Low", "Close"]:
+                if _col in df.columns:
+                    df[_col] = df[_col] * factor
         cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
         df = df[cols]
         if not df.empty and len(df) >= 62:
+            from data import filter_anomalies
             from indicators import calculate_indicators
+            df = filter_anomalies(df)
             df = calculate_indicators(df)
         return df
     except Exception:

@@ -135,11 +135,12 @@ def _load_data(period_val: str) -> tuple:
 # Strategy runner
 # ══════════════════════════════════════════════════════════════════
 
-def _run_strategy(name, preset, stock_data, hsi_df, is_mo, oos_mo, trade_size, slippage, min_oos):
+def _run_strategy(name, preset, stock_data, hsi_df, is_mo, oos_mo, trade_size, slippage, min_oos, use_pit=False):
     kw = {"min_oos_trades": min_oos}
     if preset.get("min_hold_days") is not None: kw["min_hold_days"] = preset["min_hold_days"]
     if preset.get("cooldown_days")  is not None: kw["cooldown_days"]  = preset["cooldown_days"]
     if preset.get("seasonal_filter"):            kw["seasonal_filter"] = True
+    kw["use_pit_universe"] = use_pit
     try:
         results = run_portfolio_walk_forward(
             stock_data, preset["buy"], preset["sell"],
@@ -288,6 +289,10 @@ def _params_row():
             dbc.Label("最低有效OOS交易數", className="small"),
             dbc.Input(id="rm-min-oos", type="number", value=5, min=1, max=20, step=1),
         ], xs=6, md=2),
+        dbc.Col([
+            dbc.Label(" ", className="small"),
+            dbc.Switch(id="rm-use-pit", label="🧬 PIT 股票池", value=True),
+        ], xs=12, md=2, className="mb-2"),
     ], className="mb-3 g-2")
 
 
@@ -381,9 +386,10 @@ def cb_mode_switch(mode):
     State("rm-slippage",   "value"),
     State("rm-min-oos",    "value"),
     State("rm-strategy",   "value"),
+    State("rm-use-pit",    "value"),
     prevent_initial_call=True,
 )
-def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_oos, strategy):
+def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_oos, strategy, use_pit):
     is_mo      = int(is_mo      or 12)
     oos_mo     = int(oos_mo     or 6)
     trade_size = float(trade_size or 100000)
@@ -409,7 +415,7 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
             preset = ACTIVE_PRESETS[name]
             srm[name] = _run_strategy(
                 name, preset, stock_data, hsi_df,
-                is_mo, oos_mo, trade_size, slippage, min_oos,
+                is_mo, oos_mo, trade_size, slippage, min_oos, use_pit=bool(use_pit),
             )
 
         if not any(any(v is not None for v in rd.values()) for rd in srm.values()):
@@ -475,7 +481,7 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
 
     rd = _run_strategy(
         strategy, preset, stock_data, hsi_df,
-        is_mo, oos_mo, trade_size, slippage, min_oos,
+        is_mo, oos_mo, trade_size, slippage, min_oos, use_pit=bool(use_pit),
     )
 
     if all(v is None for v in rd.values()):

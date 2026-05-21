@@ -7,29 +7,37 @@ from dash import html, dcc, dash_table, callback, Output, Input, State, no_updat
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
+import os
+import diskcache as _diskcache
 import cache_store as _cs
+
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache")
 
 def _job_get(job_id: str) -> dict | None:
     try:
-        return _cs.dc.get("wf_job_" + job_id)
+        with _diskcache.Cache(_CACHE_DIR) as c:
+            return c.get("wf_job_" + job_id)
     except Exception:
         return None
 
 def _job_set(job_id: str, data: dict) -> None:
     try:
-        _cs.dc.set("wf_job_" + job_id, data, expire=3600)
+        with _diskcache.Cache(_CACHE_DIR) as c:
+            c.set("wf_job_" + job_id, data, expire=3600)
     except Exception:
         pass
 
 def _job_delete(job_id: str) -> None:
     try:
-        _cs.dc.delete("wf_job_" + job_id)
+        with _diskcache.Cache(_CACHE_DIR) as c:
+            c.delete("wf_job_" + job_id)
     except Exception:
         pass
 
 def _job_count() -> int:
     try:
-        return len([k for k in _cs.dc if str(k).startswith("wf_job_")])
+        with _diskcache.Cache(_CACHE_DIR) as c:
+            return len([k for k in c if str(k).startswith("wf_job_")])
     except Exception:
         return 0
 

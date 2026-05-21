@@ -6,7 +6,7 @@
 #   • 💎 b17 ROC超跌反彈 PIT WF 通過（OOS +8.73% / 退化 -141.8% / 正Fold 7/7）
 #   • 💎 b18 Z-Score資金流向 PIT WF 通過（OOS +7.09% / 退化 -118.9% / 正Fold 6/6）
 #   • 🔬 b18+b6 Z-Score超賣 維持待觀察（Fold2/7 各僅1筆，樣本不足）
-#   • ACTIVE_PRESETS 現共 17 個策略（9個💎 + 8個🔬）
+#   • ACTIVE_PRESETS 現共 18 個策略（9個💎 + 9個🔬）
 #
 # V18 更新（2026-04-27）-- 來自 V17.0 策略複審報告：
 #
@@ -116,6 +116,10 @@
 #   • BUY_LABELS 改用 Ⓑ 前綴（Ⓑ1–Ⓑ18），SELL_LABELS 改用 Ⓢ 前綴（Ⓢ1–Ⓢ8）
 #   • 消除 b13–b18（⑬–⑱）與 SELL_LABELS（⑬–⑳）的 UI 撞號問題
 #
+# V20 新增策略（2026-05-18）：
+#   • 🔬 b17+b6 ROC急跌+超賣：b17 AND b6 雙確認，對標 💎 b12+b6，待 PIT WF 驗證
+#   • ACTIVE_PRESETS 共 18 個策略
+#
 # 每個策略 dict 欄位：
 #   desc            - UI 顯示的策略說明
 #   buy             - 18 個買入信號的 tuple (b1~b18)
@@ -128,7 +132,7 @@
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 #
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 17 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 18 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -303,7 +307,18 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 17. 🔬 b18+b6 Z-Score超賣（2026-05-17 新增，待 WF 驗證）────
+    # ── 17. 🔬 b17+b6 ROC急跌+超賣（2026-05-18 新增，待 WF 驗證）────
+    "🔬 b17+b6 ROC急跌+超賣": {
+        "desc": "【🧪 測試中】b17（ROC5 < -8% 急跌）AND b6（RSI<30）雙確認。"
+                "對標 💎 b12+b6，驗證急跌幅度過濾是否比純量能過濾更有效。"
+                "s2布林上軌出場，MIN5。待 PIT WF 驗證。",
+        "buy":  (False, False, False, False, False, True,  False, False,
+                 False, False, False, False, False, False, False, False, True, False),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
+    },
+
+    # ── 18. 🔬 b18+b6 Z-Score超賣（2026-05-17 新增，待 WF 驗證）────
     "🔬 b18+b6 Z-Score超賣": {
         "desc": "【🧪 測試中】b18（Z-Score資金流向）AND b6（RSI<30）雙確認。"
                 "對標 💎 b12+b6，驗證 Z-Score 量能定義是否優於固定倍數。"
