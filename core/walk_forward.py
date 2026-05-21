@@ -12,6 +12,7 @@
 # v17 行為沿用：方案 A 延伸追蹤、退化率 N/A 處理、強制平倉拆分。
 # ══════════════════════════════════════════════════════════════════
 
+import random
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -322,17 +323,28 @@ def _apply_max_positions(trades: list, max_pos: int) -> list:
     真實同時持倉上限：在任意買入時間點，
     若當前已有 max_pos 個持倉未平，則跳過此筆新進場。
     持倉判斷：_buy_date <= buy_date 且 _sell_date > buy_date
+
+    V20 修正：同一買入日內用「日期作 seed 的可重現隨機排序」決定先後，
+    取代舊的 ticker 字母排序（字母序會永遠優先 0001–0999、排除 9988/9618/3690）。
     """
     if not max_pos or max_pos <= 0:
         return trades
 
-    # 按買入日期排序，確保先到先得
-    sorted_trades = sorted(trades, key=lambda t: (t["_buy_date"], t.get("ticker", "")))
+    # 先按買入日期分組，組內用日期 seed 洗牌（可重現，但無字母 bias）
+    by_date: dict = {}
+    for t in trades:
+        by_date.setdefault(t["_buy_date"], []).append(t)
+
+    ordered = []
+    for d in sorted(by_date):
+        bucket = by_date[d]
+        rng = random.Random(int(pd.Timestamp(d).timestamp()))
+        rng.shuffle(bucket)
+        ordered.extend(bucket)
 
     result = []
-    for trade in sorted_trades:
-        buy_date  = trade["_buy_date"]
-        # 計算此刻已有多少持倉仍開著
+    for trade in ordered:
+        buy_date = trade["_buy_date"]
         open_count = sum(
             1 for t in result
             if t["_buy_date"] <= buy_date and t["_sell_date"] > buy_date

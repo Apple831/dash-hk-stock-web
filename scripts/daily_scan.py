@@ -1,10 +1,15 @@
 """
 每日自動掃描 + Telegram 通知
 
-港股收盤後（HKT 16:30 / UTC 08:30）由 Render cron job 觸發。
-掃描 stocks.txt 全部股票，對 ACTIVE_PRESETS 5 個策略做 AND 邏輯買入訊號判斷。
-有命中 → 發 Telegram；無命中 → 靜默退出。
-失敗 → 印 log 並 exit(1)，讓 Render 顯示 cron 失敗。
+港股收盤後（HKT 16:30 / UTC 08:30）由 Render cron job / GitHub Actions 觸發。
+掃描 stocks.txt 全部股票，對「實盤策略」做 AND 邏輯買入訊號判斷。
+有命中 → 發 Telegram；無命中 → 發心跳。
+失敗 → 印 log 並 exit(1)。
+
+V20 修正：
+  1. 牛市策略洩漏：牛市改只掃 LIVE_PRESETS（💎 已驗證），不再洩漏 🔬 測試策略。
+  2. 訊息增強：每筆顯示「股票名稱（TradingView，多為中文）」與「共振策略數」，
+     並按共振數由多到少排序。名稱查詢失敗時 fallback 顯示代碼。
 """
 import os
 import sys
@@ -17,7 +22,59 @@ import requests
 from data import load_stocks, get_stock_data
 from indicators import calculate_indicators, precompute_signals
 from regime import detect_regime
-from config import ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD, REGIME_RECOMMENDATIONS
+from config import (
+    ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD,
+    REGIME_RECOMMENDATIONS, TV_URL, TV_HEADERS,
+)
+
+
+# ── 實盤策略白名單：只有 💎 已通過 PIT WF 的策略可推播 ──────────────
+LIVE_PRESETS = {name: p for name, p in ACTIVE_PRESETS.items() if name.startswith("💎")}
+
+
+# ── 股票名稱：用 TradingView screener 一次抓全部（多為中文名）──────
+# 只在有命中、需要組訊息時才查一次；查不到 fallback 顯示代碼。
+_TV_NAME_MAP: dict | None = None
+
+
+def _load_tv_name_map() -> dict:
+    """一次請求 TradingView，回 {ticker: 名稱}。失敗回空 dict（呼叫端 fallback）。"""
+    global _TV_NAME_MAP
+    if _TV_NAME_MAP is not None:
+        return _TV_NAME_MAP
+
+    name_map: dict = {}
+    try:
+        payload = {
+            "filter": [{"left": "close", "operation": "greater", "right": 0}],
+            "columns": ["name", "description"],
+            "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
+            "range": [0, 5000],
+        }
+        resp = requests.post(TV_URL, headers=TV_HEADERS, json=payload, timeout=20)
+        resp.raise_for_status()
+        for row in resp.json().get("data", []):
+            d = row.get("d", [])
+            if len(d) < 2:
+                continue
+            try:
+                ticker = f"{int(d[0]):04d}.HK"
+            except (ValueError, TypeError):
+                continue
+            desc = (d[1] or "").strip()
+            if desc:
+                name_map[ticker] = desc
+        print(f"[NAME] TradingView 名稱表載入 {len(name_map)} 筆", flush=True)
+    except Exception as e:
+        print(f"[NAME] TradingView 名稱查詢失敗，將顯示代碼：{e}", flush=True)
+
+    _TV_NAME_MAP = name_map
+    return name_map
+
+
+def get_stock_name(ticker: str) -> str:
+    """回傳公司名稱；查不到回空字串（呼叫端 fallback 顯示代碼）。"""
+    return _load_tv_name_map().get(ticker, "")
 
 
 def detect_hsi_regime() -> dict:
@@ -33,7 +90,7 @@ def scan_all(presets: dict | None = None, current_month: int | None = None) -> l
     if current_month is None:
         from datetime import datetime, timezone, timedelta
         current_month = datetime.now(timezone(timedelta(hours=8))).month
-    active = presets if presets is not None else ACTIVE_PRESETS
+    active = presets if presets is not None else LIVE_PRESETS
     preset_active = {
         name: [f"b{i+1}" for i, v in enumerate(p["buy"]) if v]
         for name, p in active.items()
@@ -52,11 +109,10 @@ def scan_all(presets: dict | None = None, current_month: int | None = None) -> l
             sigs = precompute_signals(df)
 
             matched = []
-            active_cfg = presets if presets is not None else ACTIVE_PRESETS
             for name, active_sigs in preset_active.items():
                 if not active_sigs:
                     continue
-                if active_cfg.get(name, {}).get("seasonal_filter") and current_month not in [1, 4, 10]:
+                if active.get(name, {}).get("seasonal_filter") and current_month not in [1, 4, 10]:
                     continue
                 if all(bool(sigs[b].iloc[-1]) for b in active_sigs):
                     matched.append(name)
@@ -70,12 +126,13 @@ def scan_all(presets: dict | None = None, current_month: int | None = None) -> l
                 "rsi":     round(float(last["RSI"]), 1),
                 "price":   round(float(last["Close"]), 2),
                 "presets": matched,
+                "n":       len(matched),   # 共振策略數
             })
         except Exception as e:
             print(f"[SCAN][{ticker}] {type(e).__name__}: {e}", flush=True)
 
-    preset_order = {name: i for i, name in enumerate(active)}
-    hits.sort(key=lambda h: (preset_order[h["presets"][0]], h["rsi"]))
+    # 排序：共振數多 → 少；同共振數則 RSI 低（更超賣）在前
+    hits.sort(key=lambda h: (-h["n"], h["rsi"]))
     return hits
 
 
@@ -94,9 +151,13 @@ def build_message(hits: list[dict], regime_label: str, date_str: str,
         "🟢 買入訊號：",
     ]
     for h in hits:
+        name = get_stock_name(h["ticker"])
+        name_part = f" {name}" if name else ""
         presets_str = ", ".join(h["presets"])
+        n = h.get("n", len(h["presets"]))
         lines.append(
-            f"• {h['ticker']}｜{presets_str}｜RSI={h['rsi']}｜現價 {h['price']}"
+            f"• {h['ticker']}{name_part}｜🎯共振 {n} 個"
+            f"｜{presets_str}｜RSI={h['rsi']}｜現價 {h['price']}"
         )
     return "\n".join(lines)
 
@@ -130,12 +191,13 @@ def main() -> int:
 
         FULL_SCAN_LABELS = {"強牛市", "弱牛市"}
         if label in FULL_SCAN_LABELS:
-            hits = scan_all(current_month=hkt_now.month)
+            # 牛市也只掃 💎 實盤策略（LIVE_PRESETS），不洩漏 🔬 測試策略
+            hits = scan_all(presets=LIVE_PRESETS, current_month=hkt_now.month)
             prefix = ""
         else:
             rec_names = REGIME_RECOMMENDATIONS.get(label, [])
             if rec_names:
-                filtered = {k: v for k, v in ACTIVE_PRESETS.items() if k in rec_names}
+                filtered = {k: v for k, v in LIVE_PRESETS.items() if k in rec_names}
                 hits = scan_all(presets=filtered, current_month=hkt_now.month)
                 prefix = f"⚠️ {label}：只推送推薦策略（{len(filtered)} 個）"
             else:
