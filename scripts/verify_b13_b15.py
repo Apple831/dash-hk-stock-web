@@ -8,8 +8,9 @@ from config import B_NAMES, ACTIVE_PRESETS
 
 print("B_NAMES 數量：", len(B_NAMES))
 for name, p in ACTIVE_PRESETS.items():
-    if len(p["buy"]) != 16:
-        print("tuple 錯誤：" + name + " = " + str(len(p["buy"])))
+    if len(p["buy"]) != len(B_NAMES):
+        print("tuple 錯誤：" + name + " = " + str(len(p["buy"])) +
+              "（期望 " + str(len(B_NAMES)) + "）")
 
 tickers = ["0700.HK", "9988.HK", "1810.HK", "0005.HK", "2318.HK",
            "0175.HK", "1211.HK", "2333.HK", "0941.HK", "3690.HK"]

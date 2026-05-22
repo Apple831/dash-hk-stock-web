@@ -44,6 +44,7 @@ def _job_count() -> int:
 from data import get_cached, load_stocks
 from indicators import calculate_indicators
 from walk_forward import run_walk_forward, run_portfolio_walk_forward
+from backtest import calc_bt_metrics
 from config import (
     STRATEGY_PRESETS,
     BUY_LABELS, SELL_LABELS,
@@ -408,6 +409,114 @@ def _fold_table(rows: list) -> dash_table.DataTable:
         style_cell=_CELL,
         style_table={"overflowX": "auto"},
     )
+
+
+_WF_STOCK_COLS = [
+    {"name": "代碼",         "id": "代碼"},
+    {"name": "OOS平均每筆%",  "id": "平均每筆%"},
+    {"name": "OOS勝率%",      "id": "勝率%"},
+    {"name": "OOS交易數",     "id": "交易次數"},
+    {"name": "Profit F",      "id": "Profit Factor"},
+    {"name": "最大回撤%",     "id": "最大回撤%"},
+    {"name": "最大連輸",      "id": "最大連輸"},
+    {"name": "平均持倉天",    "id": "平均持倉天"},
+]
+
+_WF_STOCK_COND = [
+    {"if": {"row_index": "odd"}, "backgroundColor": "#1f1f1f"},
+    {"if": {"filter_query": "{平均每筆%} > 0", "column_id": "平均每筆%"},
+     "color": "#26a69a", "fontWeight": "bold"},
+    {"if": {"filter_query": "{平均每筆%} < 0", "column_id": "平均每筆%"},
+     "color": "#ef5350", "fontWeight": "bold"},
+    {"if": {"filter_query": "{Profit Factor} >= 1.5", "column_id": "Profit Factor"},
+     "color": "#26a69a"},
+    {"if": {"filter_query": "{最大回撤%} < -20", "column_id": "最大回撤%"},
+     "color": "#ef5350"},
+]
+
+
+def _per_stock_oos_rows(wf_results: list, trade_size: float) -> list:
+    """把所有有效 Fold 的 OOS 策略出場交易按 ticker 分組，逐股算 metrics。"""
+    from collections import defaultdict
+    by_ticker = defaultdict(list)
+    for r in wf_results:
+        if not r.get("valid_oos"):
+            continue
+        for t in r.get("oos_trades", []):
+            tk = t.get("ticker")
+            if tk:
+                by_ticker[tk].append(t)
+
+    rows = []
+    for tk, trades in by_ticker.items():
+        # 用該股 OOS 交易按賣出日複利重建一條 equity，純為了算最大回撤（近似值）
+        ordered = sorted(trades, key=lambda x: x.get("_sell_date"))
+        cap, eq_rows = trade_size, []
+        for t in ordered:
+            cap *= (1 + t["回報%"] / 100)
+            eq_rows.append({"date": t["_sell_date"], "equity": cap})
+        if eq_rows:
+            eq_df = (pd.DataFrame(eq_rows)
+                     .drop_duplicates("date", keep="last")
+                     .set_index("date")[["equity"]])
+        else:
+            eq_df = pd.DataFrame()
+
+        m = calc_bt_metrics(trades, eq_df, trade_size)
+        if not m:
+            continue
+        pf = m["Profit Factor"]
+        rows.append({
+            "代碼":          tk,
+            "平均每筆%":     round(m["平均每筆回報%"], 2),
+            "勝率%":         round(m["勝率%"], 1),
+            "交易次數":      m["交易次數"],
+            "Profit Factor": "∞" if pf == float("inf") else round(pf, 2),
+            "最大回撤%":     round(m["最大回撤%"], 2),
+            "最大連輸":      m["最大連輸"],
+            "平均持倉天":    round(m["平均持倉天數"], 1),
+            "_avg_raw":      m["平均每筆回報%"],
+        })
+    rows.sort(key=lambda x: -x["_avg_raw"])
+    return rows
+
+
+def _per_stock_section(wf_results: list, trade_size: float):
+    rows = _per_stock_oos_rows(wf_results, trade_size)
+    if not rows:
+        return html.Div()
+    n    = len(rows)
+    pos  = sum(1 for r in rows if r["_avg_raw"] > 0)
+    avg  = sum(r["_avg_raw"] for r in rows) / n
+    data = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+    return html.Div([
+        html.H6("🏆 全倉 OOS 逐股結果", className="mb-2"),
+        dbc.Alert(
+            f"📊 共回測 {n} 隻｜🟢 正回報 {pos}｜🔴 負回報 {n - pos}｜"
+            f"平均每筆 {avg:+.2f}%（僅統計有效 Fold 的策略出場交易，已排除期末強制平倉）",
+            color="secondary", className="py-2 mb-2",
+        ),
+        dash_table.DataTable(
+            columns=_WF_STOCK_COLS,
+            data=data,
+            sort_action="native",
+            page_size=30,
+            style_header=_HDR,
+            style_data=_DAT,
+            style_data_conditional=_WF_STOCK_COND,
+            style_cell={"textAlign": "center", "padding": "5px 12px",
+                        "fontFamily": "monospace", "fontSize": "0.85rem"},
+            style_cell_conditional=[{"if": {"column_id": "代碼"}, "textAlign": "left"}],
+            style_table={"overflowX": "auto"},
+        ),
+        html.Small(
+            "ℹ️ 「最大回撤%」為各股 OOS 交易複利重建的近似值，"
+            "與 WF 引擎本身的固定倉位非複利口徑不同，僅供排序與體感參考，"
+            "請勿當作嚴謹回撤數字。",
+            className="text-muted d-block mt-2",
+            style={"fontSize": "0.78rem"},
+        ),
+    ], className="mb-3")
 
 
 # ── 數據載入 + WF 執行 ────────────────────────────────────────────────
@@ -900,6 +1009,8 @@ def cb_poll_progress(n_intervals, job_id):
             _fold_table(rows),
         ], className="mb-3")
 
+        stock_section = _per_stock_section(wf_results, ts) if is_portfolio else html.Div()
+
         status_str = (
             f"✅ {mode_lbl} | {strategy} | "
             f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | {n_folds} 個 Fold"
@@ -908,7 +1019,7 @@ def cb_poll_progress(n_intervals, job_id):
             html.Small(f"✅ 驗證完成：{n_folds} 個 Fold", className="text-success mb-1 d-block"),
             dbc.Progress(value=100, color="success", style={"height": "22px"}),
         ])
-        return done_bar, True, status_str, [*verdict, bar_section, deg_section, oos_section, fold_section]
+        return done_bar, True, status_str, [*verdict, bar_section, deg_section, oos_section, stock_section, fold_section]
 
     except Exception as e:
         import traceback
