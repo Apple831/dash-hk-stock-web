@@ -6,7 +6,7 @@
 #   • 💎 b17 ROC超跌反彈 PIT WF 通過（OOS +8.73% / 退化 -141.8% / 正Fold 7/7）
 #   • 💎 b18 Z-Score資金流向 PIT WF 通過（OOS +7.09% / 退化 -118.9% / 正Fold 6/6）
 #   • 🔬 b18+b6 Z-Score超賣 維持待觀察（Fold2/7 各僅1筆，樣本不足）
-#   • ACTIVE_PRESETS 現共 18 個策略（9個💎 + 9個🔬）
+#   • ACTIVE_PRESETS 現共 17 個策略
 #
 # V18 更新（2026-04-27）-- 來自 V17.0 策略複審報告：
 #
@@ -17,7 +17,7 @@
 #
 # 新增策略欄位：cooldown_days（可選，獨立於 min_hold_days）
 #   • 不設 → 沿用 min_hold_days（v17 行為，向後相容）
-#   • 設為 0 → 完全不冷卻（對照組原語意）
+#   • 設為 0 → 完全不冷卻(對照組原語意)
 #   • 設為其他正整數 → 該值天數冷卻
 #
 # V18 WF 已重跑（2026-05-09）：desc 內 "V18 數字" 為 1y 引擎結果
@@ -120,6 +120,12 @@
 #   • 🔬 b17+b6 ROC急跌+超賣：b17 AND b6 雙確認，對標 💎 b12+b6，待 PIT WF 驗證
 #   • ACTIVE_PRESETS 共 18 個策略
 #
+# V21 PIT 複審（2026-05-23）：
+#   • 💎+ M30 RSI進雙出MIN30 移至 LEGACY
+#     PIT OOS +1.03%、正Fold 4/7、2022-23 連三 Fold 負（-0.75% / -12.96% / -6.54%）、末 Fold 僅 38 筆
+#     與已降級的 💎+s2 M30 / 💎M30 / 🔄🔄M30 同源同症（b6 進場 MIN30 家族）
+#   • ACTIVE_PRESETS 由 18 個減為 17 個
+#
 # 每個策略 dict 欄位：
 #   desc            - UI 顯示的策略說明
 #   buy             - 18 個買入信號的 tuple (b1~b18)
@@ -132,7 +138,7 @@
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 #
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 18 個）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 17 個）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單
 # ══════════════════════════════════════════════════════════════════
 
@@ -142,20 +148,9 @@ ACTIVE_PRESETS = {
     # 6 個策略通過 PIT Walk-Forward（IS=12月, OOS=6月, 5年, 183隻）
     # 最高回報：💎 b12+b6 OOS +14.07%（5/5 正Fold）
     # 最穩定：💎 b15+b6 OOS +7.99%（7/7 正Fold，全程無負）
-    # 舊均值回歸系列（💎+s2 M30 / 💎M30 / 🔄🔄M30）已降級 LEGACY（PIT OOS 正Fold 43%）
+    # 舊均值回歸系列（💎+s2 M30 / 💎M30 / 🔄🔄M30 / 💎+ M30 RSI進雙出MIN30）已降級 LEGACY
 
-    # ── 1. 💎+ M30 RSI 進雙出 MIN30 ──────────────────────────────
-    "💎+ M30 RSI進雙出MIN30": {
-        "desc": "【實盤候選】b6 進場，s6+s8 雙出場，MIN30。V18 數字：OOS +13.70% / 退化 -91.3% / 正Fold 100%。"
-                "V18-5Y-Open 數字：OOS +7.06% / 退化 -43.1% / 正Fold 100%。"
-                "比 💎M30 略強，可作冠軍進取版。"
-                "✅ Open版 OOS +7.06%，改Open後升幅最大（+1.79%），進取版首選。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
-        "sell": (False, False, False, False, False, True,  False, True),
-        "min_hold_days": 30,
-    },
-
-    # ── 2. 🔬 資金流向測試（V18 新訊號，待 WF 驗證）──────────────
+    # ── 1. 🔬 資金流向測試（V18 新訊號，待 WF 驗證）──────────────
     "🔬 資金流向測試": {
         "desc": "【🧪 測試中】V18 新訊號：b12 資金流向——股價在MA20下方，成交量為均量2-8倍，陽線收盤。"
                 "sell 沿用冠軍三重出場（s2+s6+s8），最少持倉30天，待 WF 驗證。",
@@ -164,7 +159,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 30,
     },
 
-    # ── 3. 🔬 冠軍+季節性（V18 季節性測試，待 WF 驗證）──────────
+    # ── 2. 🔬 冠軍+季節性（V18 季節性測試，待 WF 驗證）──────────
     "🔬 冠軍+季節性": {
         "desc": "V18 季節性測試：冠軍策略限定1/4/10月入場，待 WF 驗證",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
@@ -173,7 +168,7 @@ ACTIVE_PRESETS = {
         "seasonal_filter": True,
     },
 
-    # ── 4. 🔬 均值回歸+季節性（V18 季節性測試，待 WF 驗證）───────
+    # ── 3. 🔬 均值回歸+季節性（V18 季節性測試，待 WF 驗證）───────
     "🔬 均值回歸+季節性": {
         "desc": "V18 季節性測試：均值回歸限定1/4/10月入場，待 WF 驗證",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
@@ -182,7 +177,7 @@ ACTIVE_PRESETS = {
         "seasonal_filter": True,
     },
 
-    # ── 5. 🔬 b12+b6 資金流向超賣（V18 信號測試）──────────────────
+    # ── 4. 🔬 b12+b6 資金流向超賣（V18 信號測試）──────────────────
     "🔬 b12+b6 資金流向超賣": {
         "desc": "【🧪 測試中】b6（RSI<30）+ b12（資金流向 MA20下方大量陽燭）AND 進場，"
                 "s2（布林上軌）出場，MIN5。短週期反彈試驗，待 WF 驗證。",
@@ -191,7 +186,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 6. 🔬 b11+b5 KDJ超賣布林雙確認（V18 信號測試）─────────────
+    # ── 5. 🔬 b11+b5 KDJ超賣布林雙確認（V18 信號測試）─────────────
     "🔬 b11+b5 KDJ超賣布林雙確認": {
         "desc": "【🧪 測試中】b5（布林下軌）+ b11（KDJ超賣金叉）AND 進場，"
                 "s8（KDJ高位死叉）出場，MIN5。雙重超賣確認試驗，待 WF 驗證。",
@@ -200,7 +195,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 7. 🔬 b3+b7+b8 底背離趨勢確認（V18 信號測試）─────────────
+    # ── 6. 🔬 b3+b7+b8 底背離趨勢確認（V18 信號測試）─────────────
     "🔬 b3+b7+b8 底背離趨勢確認": {
         "desc": "【🧪 測試中】b3（底背離）+ b7（MACD金叉）+ b8（趨勢確認）AND 進場，"
                 "s5（RSI超買）+ s6（MACD死叉）OR 出場，MIN10。底背離+趨勢三重確認，待 WF 驗證。",
@@ -209,7 +204,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 10,
     },
 
-    # ── 8. 💎 b12+b6 資金流向超賣（WF 驗證通過）────────────────────
+    # ── 7. 💎 b12+b6 資金流向超賣（WF 驗證通過）────────────────────
     "💎 b12+b6 資金流向超賣": {
         "desc": "WF驗證 PIT OOS+14.07% 5/5正Fold｜b12資金流向+b6RSI超賣雙確認｜出場布林上軌。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False, False, True,  False, False, False, False, False, False),
@@ -217,7 +212,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 9. 💎 b13 縮量反轉（PIT WF 驗證通過，2026-05-15）───────────
+    # ── 8. 💎 b13 縮量反轉（PIT WF 驗證通過，2026-05-15）───────────
     "💎 b13 縮量反轉": {
         "desc": "【💎 PIT 驗證通過】縮量後放量陽線：前2天量萎縮後今天放量陽線，RSI<40，MA20下方。"
                 "s2布林上軌出場，MIN5。"
@@ -228,7 +223,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 10. 💎 b14 低位吞噴（PIT WF 驗證通過，2026-05-15）──────────
+    # ── 9. 💎 b14 低位吞噴（PIT WF 驗證通過，2026-05-15）──────────
     "💎 b14 低位吞噴": {
         "desc": "【💎 PIT 驗證通過】低位半吞噴形態：昨陰今陽吞噬過半+放量+MA20下方。"
                 "s2布林上軌出場，MIN5。"
@@ -239,7 +234,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 11. 💎 b15 長下影線（PIT WF 驗證通過，2026-05-15）──────────
+    # ── 10. 💎 b15 長下影線（PIT WF 驗證通過，2026-05-15）──────────
     "💎 b15 長下影線": {
         "desc": "【💎 PIT 驗證通過】長下影線：下影線>實體2倍+收高+MA20下方。"
                 "s2布林上軌出場，MIN5。"
@@ -250,7 +245,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 12. 💎 b15+b6 下影線+超賣（PIT WF 驗證通過，2026-05-16）────
+    # ── 11. 💎 b15+b6 下影線+超賣（PIT WF 驗證通過，2026-05-16）────
     "💎 b15+b6 下影線+超賣": {
         "desc": "【💎 PIT 驗證通過】b15（長下影線）AND b6（RSI<30）雙確認。"
                 "PIT WF（2026-05-15）：IS +8.15% / OOS +7.99% / 退化 -30.2% / 正Fold 7/7 / 有效7/7。"
@@ -260,7 +255,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 13. 🔬 b13+b6 縮量反轉+超賣（V19 雙確認測試）──────────────
+    # ── 12. 🔬 b13+b6 縮量反轉+超賣（V19 雙確認測試）──────────────
     "🔬 b13+b6 縮量反轉+超賣": {
         "desc": "【🧪 待觀察】b13 AND b6 雙確認。"
                 "PIT WF（2026-05-15）：OOS +8.86% / 正Fold 5/5 / 有效5/7。"
@@ -270,7 +265,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 14. 💎 b16 下影線資金流入（PIT WF 驗證通過，2026-05-15）─────
+    # ── 13. 💎 b16 下影線資金流入（PIT WF 驗證通過，2026-05-15）─────
     "💎 b16 下影線資金流入": {
         "desc": "【💎 PIT 驗證通過】b16：長下影線+放量陽燭（量1.5-12x）整合訊號。"
                 "PIT WF（2026-05-15）：IS +6.43% / OOS +7.30% / 退化 -101.7% / 正Fold 7/7 / 有效7/7。"
@@ -281,7 +276,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 15. 💎 b17 ROC超跌反彈（PIT WF 驗證通過，2026-05-17）────────
+    # ── 14. 💎 b17 ROC超跌反彈（PIT WF 驗證通過，2026-05-17）────────
     "💎 b17 ROC超跌反彈": {
         "desc": "【💎 PIT 驗證通過】b17：5日ROC < -8%（急跌），收盤<MA20，RSI<45，陽燭。"
                 "與b6互補，捕捉急跌但RSI未到30的反彈機會。"
@@ -294,7 +289,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 16. 💎 b18 Z-Score資金流向（PIT WF 驗證通過，2026-05-17）────
+    # ── 15. 💎 b18 Z-Score資金流向（PIT WF 驗證通過，2026-05-17）────
     "💎 b18 Z-Score資金流向": {
         "desc": "【💎 PIT 驗證通過】b18：成交量 Z-Score > 2.0（超過2個標準差），"
                 "收盤<MA20，陽燭。b12固定倍數的升級版，自動適應個股量能波動率。"
@@ -307,7 +302,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 17. 🔬 b17+b6 ROC急跌+超賣（2026-05-18 新增，待 WF 驗證）────
+    # ── 16. 🔬 b17+b6 ROC急跌+超賣（2026-05-18 新增，待 WF 驗證）────
     "🔬 b17+b6 ROC急跌+超賣": {
         "desc": "【🧪 測試中】b17（ROC5 < -8% 急跌）AND b6（RSI<30）雙確認。"
                 "對標 💎 b12+b6，驗證急跌幅度過濾是否比純量能過濾更有效。"
@@ -318,7 +313,7 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    # ── 18. 🔬 b18+b6 Z-Score超賣（2026-05-17 新增，待 WF 驗證）────
+    # ── 17. 🔬 b18+b6 Z-Score超賣（2026-05-17 新增，待 WF 驗證）────
     "🔬 b18+b6 Z-Score超賣": {
         "desc": "【🧪 測試中】b18（Z-Score資金流向）AND b6（RSI<30）雙確認。"
                 "對標 💎 b12+b6，驗證 Z-Score 量能定義是否優於固定倍數。"
@@ -540,6 +535,24 @@ LEGACY_PRESETS = {
                  False, False, False, True,  False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
+    },
+
+    # ── V21 PIT 複審移入 LEGACY（2026-05-23）──────────────────────
+    "+ M30 RSI進雙出MIN30 [LEGACY]": {
+        "desc": "【📚 LEGACY 移入 2026-05-23，PIT WF 未通過】b6 進場，s6+s8 雙出場，MIN30。"
+                "V18 數字（歷史參照）：OOS +13.70% / 退化 -91.3% / 正Fold 100%。"
+                "V18-5Y-Open 數字（歷史參照）：OOS +7.06% / 退化 -43.1% / 正Fold 100%。"
+                "V21 PIT WF（2026-05-23）：OOS +1.03% / 平均退化率失真（IS 正負亂跳，"
+                "avg IS +2.16% 為大正大負抵銷，退化率 81.3% 無統計意義）/ "
+                "正 Fold 僅 4/7（57%，接近隨機，未達 60% 門檻）。"
+                "致命問題：Fold1-3（2022 大熊市至 2023 中）OOS 連續虧損 "
+                "-0.75% / -12.96% / -6.54%，熊市方向錯誤；後段樣本萎縮（末 Fold 僅 38 筆），"
+                "正數靠少量樣本撐。"
+                "結論：與已降級的 💎+s2 M30 / 💎M30 / 🔄🔄M30 同源同症（b6 進場 MIN30 家族），"
+                "固定池高估在 PIT 下現形，移出實盤候選。",
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "sell": (False, False, False, False, False, True,  False, True),
+        "min_hold_days": 30,
     },
 
 }

@@ -1,6 +1,7 @@
 import uuid
 import threading
 import time
+import traceback
 
 import dash
 from dash import html, dcc, dash_table, callback, Output, Input, State, no_update
@@ -24,8 +25,8 @@ def _job_set(job_id: str, data: dict) -> None:
     try:
         with _diskcache.Cache(_CACHE_DIR) as c:
             c.set("wf_job_" + job_id, data, expire=3600)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WF] _job_set FAILED job={job_id[:8]}: {type(e).__name__}: {e}", flush=True)
 
 def _job_delete(job_id: str) -> None:
     try:
@@ -437,48 +438,53 @@ _WF_STOCK_COND = [
 
 def _per_stock_oos_rows(wf_results: list, trade_size: float) -> list:
     """把所有有效 Fold 的 OOS 策略出場交易按 ticker 分組，逐股算 metrics。"""
-    from collections import defaultdict
-    by_ticker = defaultdict(list)
-    for r in wf_results:
-        if not r.get("valid_oos"):
-            continue
-        for t in r.get("oos_trades", []):
-            tk = t.get("ticker")
-            if tk:
-                by_ticker[tk].append(t)
+    try:
+        from collections import defaultdict
+        by_ticker = defaultdict(list)
+        for r in wf_results:
+            if not r.get("valid_oos"):
+                continue
+            for t in r.get("oos_trades", []):
+                tk = t.get("ticker")
+                if tk:
+                    by_ticker[tk].append(t)
 
-    rows = []
-    for tk, trades in by_ticker.items():
-        # 用該股 OOS 交易按賣出日複利重建一條 equity，純為了算最大回撤（近似值）
-        ordered = sorted(trades, key=lambda x: x.get("_sell_date"))
-        cap, eq_rows = trade_size, []
-        for t in ordered:
-            cap *= (1 + t["回報%"] / 100)
-            eq_rows.append({"date": t["_sell_date"], "equity": cap})
-        if eq_rows:
-            eq_df = (pd.DataFrame(eq_rows)
-                     .drop_duplicates("date", keep="last")
-                     .set_index("date")[["equity"]])
-        else:
-            eq_df = pd.DataFrame()
+        rows = []
+        for tk, trades in by_ticker.items():
+            # 用該股 OOS 交易按賣出日複利重建一條 equity，純為了算最大回撤（近似值）
+            # None-safe：_sell_date 為 None 的交易排到最後，避免 TypeError
+            ordered = sorted(trades, key=lambda x: (x.get("_sell_date") is None, x.get("_sell_date")))
+            cap, eq_rows = trade_size, []
+            for t in ordered:
+                cap *= (1 + t["回報%"] / 100)
+                eq_rows.append({"date": t["_sell_date"], "equity": cap})
+            if eq_rows:
+                eq_df = (pd.DataFrame(eq_rows)
+                         .drop_duplicates("date", keep="last")
+                         .set_index("date")[["equity"]])
+            else:
+                eq_df = pd.DataFrame()
 
-        m = calc_bt_metrics(trades, eq_df, trade_size)
-        if not m:
-            continue
-        pf = m["Profit Factor"]
-        rows.append({
-            "代碼":          tk,
-            "平均每筆%":     round(m["平均每筆回報%"], 2),
-            "勝率%":         round(m["勝率%"], 1),
-            "交易次數":      m["交易次數"],
-            "Profit Factor": "∞" if pf == float("inf") else round(pf, 2),
-            "最大回撤%":     round(m["最大回撤%"], 2),
-            "最大連輸":      m["最大連輸"],
-            "平均持倉天":    round(m["平均持倉天數"], 1),
-            "_avg_raw":      m["平均每筆回報%"],
-        })
-    rows.sort(key=lambda x: -x["_avg_raw"])
-    return rows
+            m = calc_bt_metrics(trades, eq_df, trade_size)
+            if not m:
+                continue
+            pf = m["Profit Factor"]
+            rows.append({
+                "代碼":          tk,
+                "平均每筆%":     round(m["平均每筆回報%"], 2),
+                "勝率%":         round(m["勝率%"], 1),
+                "交易次數":      m["交易次數"],
+                "Profit Factor": "∞" if pf == float("inf") else round(pf, 2),
+                "最大回撤%":     round(m["最大回撤%"], 2),
+                "最大連輸":      m["最大連輸"],
+                "平均持倉天":    round(m["平均持倉天數"], 1),
+                "_avg_raw":      m["平均每筆回報%"],
+            })
+        rows.sort(key=lambda x: -x["_avg_raw"])
+        return rows
+    except Exception:
+        print("[WF] _per_stock_oos_rows ERROR:\n" + traceback.format_exc(), flush=True)
+        raise
 
 
 def _per_stock_section(wf_results: list, trade_size: float):
@@ -908,6 +914,7 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
         dbc.Progress(value=2, striped=True, animated=True,
                      color="info", style={"height": "22px"}),
     ])
+    print(f"[WF] cb_run_wf RET status_msg='⏳ 驗證進行中...' job={job_id[:8]}", flush=True)
     return "⏳ 驗證進行中...", [], job_id, False, init_bar
 
 
@@ -925,17 +932,21 @@ def cb_poll_progress(n_intervals, job_id):
     short = (job_id[:8] + "...") if job_id else "None"
     in_jobs = _job_get(job_id) is not None if job_id else False
     print(f"[WF] cb_poll       n={n_intervals} job={short} in_jobs={in_jobs} total_jobs={_job_count()}")
+    _cur_status = (_job_get(job_id) or {}).get("status") if job_id else None
+    print(f"[WF] cb_poll       status={_cur_status}", flush=True)
 
     if not job_id:
         # no active job at all → stop interval
         return no_update, True, no_update, no_update
 
     if _job_get(job_id) is None:
-        # job not registered yet (race condition) → keep polling, do NOT stop
-        print(f"[WF] cb_poll       job={short} not found yet, keep polling")
+        print(f"[WF] cb_poll       job={short} not found yet (startup race), keep polling")
         return no_update, False, no_update, no_update
 
     job = _job_get(job_id)
+
+    if job is not None and job.get("status") == "consumed":
+        return no_update, True, no_update, no_update
 
     if job["status"] == "running":
         fold    = job.get("fold", 0)
@@ -954,12 +965,13 @@ def cb_poll_progress(n_intervals, job_id):
                          striped=True, animated=True,
                          color="info", style={"height": "22px"}),
         ])
+        print(f"[WF] cb_poll RUNNING branch fold={fold}/{total}", flush=True)
         return progress_ui, False, "⏳ 驗證進行中...", no_update
 
     # ── 完成 ──────────────────────────────────────────────────────────
     print(f"[WF] cb_poll DONE  job={short}, rendering results")
     job_data = _job_get(job_id) or {}
-    _job_delete(job_id)
+    _job_set(job_id, {"status": "consumed", "created_at": job_data.get("created_at", time.time())})
     wf_results   = job_data.get("result")
     is_portfolio = job_data.get("is_portfolio", False)
     err          = job_data.get("error")
@@ -1019,11 +1031,44 @@ def cb_poll_progress(n_intervals, job_id):
             html.Small(f"✅ 驗證完成：{n_folds} 個 Fold", className="text-success mb-1 d-block"),
             dbc.Progress(value=100, color="success", style={"height": "22px"}),
         ])
+
+        # ── 序列化探針：return 之前先試跑 JSON 編碼，揪出 Dash framework 層的序列化失敗 ──
+        try:
+            from dash._utils import to_json as _dash_to_json
+        except Exception:
+            _dash_to_json = None
+        if _dash_to_json is not None:
+            _sections_to_probe = [
+                ("verdict",       verdict),
+                ("bar_section",   bar_section),
+                ("deg_section",   deg_section),
+                ("oos_section",   oos_section),
+                ("stock_section", stock_section),
+                ("fold_section",  fold_section),
+                ("done_bar",      done_bar),
+            ]
+            for _name, _sec in _sections_to_probe:
+                try:
+                    _dash_to_json(_sec)
+                    print(f"[WF] probe OK    section={_name}", flush=True)
+                except Exception as _se:
+                    print(
+                        f"[WF] probe FAIL  section={_name}: {type(_se).__name__}: {_se}\n"
+                        + traceback.format_exc(),
+                        flush=True,
+                    )
+
+        print(
+            f"[WF] cb_poll DONE returned "
+            f"done_bar={type(done_bar).__name__} "
+            f"status_str_len={len(status_str)} "
+            f"result_children={len([*verdict, bar_section, deg_section, oos_section, stock_section, fold_section])}",
+            flush=True,
+        )
         return done_bar, True, status_str, [*verdict, bar_section, deg_section, oos_section, stock_section, fold_section]
 
     except Exception as e:
-        import traceback
-        print(f"[WF] cb_poll RENDER ERROR: {e}\n{traceback.format_exc()}")
+        print(f"[WF] cb_poll RENDER ERROR: {e}\n{traceback.format_exc()}", flush=True)
         return [], True, str(e), dbc.Alert(
             [html.Strong("❌ 結果渲染失敗"), html.Br(), html.Code(str(e))],
             color="danger", className="mt-2",
