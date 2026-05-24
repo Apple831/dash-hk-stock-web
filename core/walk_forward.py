@@ -417,7 +417,9 @@ def run_portfolio_walk_forward(
         while s + is_days + oos_days <= total_days:
             pit_dates.append(all_dates[s])
             s += oos_days
-        universe_cache = get_universe_cache(pit_dates)
+        # 修正（2026-05-24）：傳入 ref_df 末日作為「實際數據需求上界」，
+        # 讓新鮮度檢查涵蓋最後一個 Fold 的 OOS 段，而非只到 IS 起始日。
+        universe_cache = get_universe_cache(pit_dates, needed_through=all_dates[-1])
 
     # 熊市過濾：一次性抓取 ^HSI（避免在 loop 內重複下載）
     _hsi_regime_df = None

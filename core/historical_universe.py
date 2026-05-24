@@ -7,13 +7,36 @@ import pandas as pd
 _PROJECT_ROOT = Path(__file__).parent.parent
 _PRICES_DIR = _PROJECT_ROOT / "data" / "eodhd_prices"
 
+# 確定性錨定：必活躍大型股，用於新鮮度檢查（避免純隨機抽樣誤報/漏報）
+_FRESHNESS_ANCHORS = ["0700.HK", "0005.HK", "9988.HK", "0939.HK", "1299.HK"]
+
 
 def _check_data_freshness(cutoff: pd.Timestamp) -> None:
+    """
+    檢查 EODHD 數據是否覆蓋到 cutoff（= WF 實際會用到的最遠日期，通常是最後一個
+    Fold 的 OOS 結束日 / ref_df 末日），超出 90 天即警告。
+
+    修正（2026-05-24）：
+      1. cutoff 由呼叫端傳入「實際數據需求上界」，不再用 IS 起始日 —— 舊版以 IS 起始日
+         判斷，盲區寬度等於整個 OOS 窗口（末 Fold OOS 落在缺口卻不報警，被靜默跳過）。
+      2. 先讀固定錨定大型股的 max 日期（確定性），再補隨機抽樣 —— 舊版純隨機抽 20 檔，
+         若抽樣全落在退市/停更股，max 日期會被低估而誤報，或漏報。
+    """
     _prices_max_date = None
-    import random
+
+    # 候選檔：先錨定大型股，再補隨機抽樣
+    candidate_files = []
+    for _a in _FRESHNESS_ANCHORS:
+        _f = _PRICES_DIR / f"{_a}.json"
+        if _f.exists():
+            candidate_files.append(_f)
+
     all_files = list(_PRICES_DIR.glob("*.json"))
-    _sample_files = random.sample(all_files, min(20, len(all_files)))
-    for _f in _sample_files:
+    if all_files:
+        import random
+        candidate_files += random.sample(all_files, min(20, len(all_files)))
+
+    for _f in candidate_files:
         try:
             import json as _json
             _records = _json.loads(_f.read_text(encoding="utf-8"))
@@ -28,8 +51,8 @@ def _check_data_freshness(cutoff: pd.Timestamp) -> None:
         import warnings
         warnings.warn(
             f"[PIT WARN] EODHD 數據截至 {_prices_max_date}，"
-            f"但 fold cutoff 為 {cutoff.date()}，"
-            f"超出 90 天。此 fold 的 PIT 池子退化為準固定池，結果不可信。"
+            f"但 WF 需用到 {cutoff.date()}（含最後 Fold 的 OOS），"
+            f"超出 90 天。落在缺口的 Fold 會被靜默跳過，PIT 結果不可信。"
             f"請執行 scripts/eodhd_incremental_update.py 補充數據。",
             UserWarning,
             stacklevel=3,
@@ -87,17 +110,22 @@ def get_historical_universe(
     min_price: float = 5.0,
     min_turnover_hkd: float = 50_000_000,
     min_bars: int = 62,
+    needed_through=None,
 ) -> list:
     """
     返回該日期符合條件的股票代碼清單（如 ["0700.HK", "9988.HK", ...]）
     date 之後的數據不使用（防止前視偏差）
+
+    needed_through：WF 實際會用到的最遠日期（OOS 結束日）。新鮮度檢查以此為準；
+                    未傳則退回用 date（向後相容，但盲區較大）。
     """
     if not _PRICES_DIR.exists():
         return []
 
     cutoff = pd.Timestamp(date)
-    # ── PIT 數據新鮮度檢查 ──────────────────────────────────────
-    _check_data_freshness(cutoff)
+    # ── PIT 數據新鮮度檢查（用實際需求上界，而非股票池判定日）──────
+    _freshness_cutoff = pd.Timestamp(needed_through) if needed_through is not None else cutoff
+    _check_data_freshness(_freshness_cutoff)
     result = []
 
     for json_file in _PRICES_DIR.glob("*.json"):
@@ -128,10 +156,13 @@ def get_historical_universe(
     return sorted(result)
 
 
-def get_universe_cache(dates: list, **kwargs) -> dict:
+def get_universe_cache(dates: list, needed_through=None, **kwargs) -> dict:
     """
     批量計算多個日期的股票池，返回 {date: [tickers]} 字典
     避免 walk_forward 每個 fold 重複計算
+
+    needed_through：WF 實際會用到的最遠日期（OOS 結束日 / ref_df 末日）。
+                    新鮮度檢查以此為準；未傳則退回用 max(dates)（向後相容，盲區較大）。
     """
     if not _PRICES_DIR.exists():
         return {d: [] for d in dates}
@@ -140,9 +171,13 @@ def get_universe_cache(dates: list, **kwargs) -> dict:
     min_turnover_hkd = kwargs.get("min_turnover_hkd", 50_000_000)
     min_bars = kwargs.get("min_bars", 62)
 
-    # ── PIT 數據新鮮度檢查 ──────────────────────────────────────
+    # ── PIT 數據新鮮度檢查（用實際需求上界，而非最後 Fold 的 IS 起始日）──
     if dates:
-        _check_data_freshness(pd.Timestamp(max(dates)))
+        _freshness_cutoff = (
+            pd.Timestamp(needed_through) if needed_through is not None
+            else pd.Timestamp(max(dates))
+        )
+        _check_data_freshness(_freshness_cutoff)
 
     all_dfs = {}
     for json_file in _PRICES_DIR.glob("*.json"):

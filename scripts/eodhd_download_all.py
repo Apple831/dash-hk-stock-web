@@ -2,6 +2,7 @@ import os
 import json
 import time
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -11,7 +12,8 @@ ROOT = Path(__file__).parent.parent
 DATA_DIR = ROOT / "data" / "eodhd_prices"
 STOCKS_FILE = ROOT / "stocks.txt"
 FROM_DATE = "2019-01-01"
-TO_DATE = "2024-12-31"
+# 修正（2026-05-24）：TO_DATE 改為動態今日，避免全量重抓時又退回 2024-12 缺口。
+TO_DATE = datetime.today().strftime("%Y-%m-%d")
 
 
 def load_local_tickers() -> set:
@@ -56,6 +58,7 @@ def main():
     if not api_key:
         sys.exit("錯誤：環境變數 EODHD_API_KEY 未設定")
 
+    print(f"下載區間：{FROM_DATE} → {TO_DATE}")
     print("讀取 stocks.txt ...")
     local_tickers = load_local_tickers()
     print(f"  本地清單：{len(local_tickers)} 隻")

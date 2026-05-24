@@ -91,6 +91,7 @@ FOLD_COLS = [
     {"name": "OOS交易數",  "id": "OOS 交易數"},
     {"name": "有效",       "id": "有效"},
     {"name": "股票數",     "id": "股票數"},
+    {"name": "成交股數",   "id": "成交股數"},
     {"name": "過濾原因",   "id": "過濾原因"},
 ]
 
@@ -120,6 +121,7 @@ def _build_rows(wf_results: list) -> list:
                 "OOS 交易數":  "—",
                 "有效":        "⏭️ 跳過",
                 "股票數":      "—",
+                "成交股數":    "—",
                 "過濾原因":    r.get("filter_reason", "⛔ 熊市"),
                 "_deg_raw":    None,
                 "_valid_oos":  False,
@@ -143,6 +145,7 @@ def _build_rows(wf_results: list) -> list:
             "OOS 交易數":  r["oos_trade_count"],
             "有效":        "✅" if r["valid_oos"] else f"⚠️ {r['oos_trade_count']}筆",
             "股票數":      r.get("pit_stock_count", r.get("n_stocks", 0)),
+            "成交股數":    r.get("n_stocks", "—"),
             "過濾原因":    "",
             # 內部欄位（不直接顯示）
             "_deg_raw":    deg,
@@ -197,6 +200,14 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
         if isinstance(r.get("股票數"), (int, float)) and r.get("股票數") < 20
     ) if (is_portfolio and use_pit) else 0
 
+    # 數據缺口偵測：池子充足（≥20）但實際成交股數 <5，多半是該 Fold 的 OOS
+    # 落在 EODHD 缺口被靜默跳過，而非訊號真的稀薄。
+    _pit_gap_folds = sum(
+        1 for r in rows
+        if isinstance(r.get("股票數"), (int, float)) and r.get("股票數") >= 20
+        and isinstance(r.get("成交股數"), (int, float)) and r.get("成交股數") < 5
+    ) if (is_portfolio and use_pit) else 0
+
     return [
         *([
             dbc.Alert(
@@ -214,6 +225,15 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
                 className="mb-2",
             )
         ] if _pit_low_folds > 0 else []),
+        *([
+            dbc.Alert(
+                f"🕳️ 有 {_pit_gap_folds} 個 Fold 股票池充足（≥20）但實際成交股數 <5，"
+                "高度疑似 OOS 落在 EODHD 數據缺口被靜默跳過（非訊號稀薄）。"
+                "請先執行 scripts/eodhd_incremental_update.py 補數據後再重跑判讀。",
+                color="danger",
+                className="mb-2",
+            )
+        ] if _pit_gap_folds > 0 else []),
         dbc.Alert([
             html.Strong(f"{verdict} {mode_lbl}",
                         style={"fontSize": "1.1rem"}),
