@@ -91,7 +91,6 @@ FOLD_COLS = [
     {"name": "OOS交易數",  "id": "OOS 交易數"},
     {"name": "有效",       "id": "有效"},
     {"name": "股票數",     "id": "股票數"},
-    {"name": "成交股數",   "id": "成交股數"},
     {"name": "過濾原因",   "id": "過濾原因"},
 ]
 
@@ -121,7 +120,6 @@ def _build_rows(wf_results: list) -> list:
                 "OOS 交易數":  "—",
                 "有效":        "⏭️ 跳過",
                 "股票數":      "—",
-                "成交股數":    "—",
                 "過濾原因":    r.get("filter_reason", "⛔ 熊市"),
                 "_deg_raw":    None,
                 "_valid_oos":  False,
@@ -145,7 +143,6 @@ def _build_rows(wf_results: list) -> list:
             "OOS 交易數":  r["oos_trade_count"],
             "有效":        "✅" if r["valid_oos"] else f"⚠️ {r['oos_trade_count']}筆",
             "股票數":      r.get("pit_stock_count", r.get("n_stocks", 0)),
-            "成交股數":    r.get("n_stocks", "—"),
             "過濾原因":    "",
             # 內部欄位（不直接顯示）
             "_deg_raw":    deg,
@@ -200,14 +197,6 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
         if isinstance(r.get("股票數"), (int, float)) and r.get("股票數") < 20
     ) if (is_portfolio and use_pit) else 0
 
-    # 數據缺口偵測：池子充足（≥20）但實際成交股數 <5，多半是該 Fold 的 OOS
-    # 落在 EODHD 缺口被靜默跳過，而非訊號真的稀薄。
-    _pit_gap_folds = sum(
-        1 for r in rows
-        if isinstance(r.get("股票數"), (int, float)) and r.get("股票數") >= 20
-        and isinstance(r.get("成交股數"), (int, float)) and r.get("成交股數") < 5
-    ) if (is_portfolio and use_pit) else 0
-
     return [
         *([
             dbc.Alert(
@@ -225,15 +214,6 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
                 className="mb-2",
             )
         ] if _pit_low_folds > 0 else []),
-        *([
-            dbc.Alert(
-                f"🕳️ 有 {_pit_gap_folds} 個 Fold 股票池充足（≥20）但實際成交股數 <5，"
-                "高度疑似 OOS 落在 EODHD 數據缺口被靜默跳過（非訊號稀薄）。"
-                "請先執行 scripts/eodhd_incremental_update.py 補數據後再重跑判讀。",
-                color="danger",
-                className="mb-2",
-            )
-        ] if _pit_gap_folds > 0 else []),
         dbc.Alert([
             html.Strong(f"{verdict} {mode_lbl}",
                         style={"fontSize": "1.1rem"}),
@@ -398,7 +378,6 @@ def _oos_equity_chart(wf_results: list, trade_size: float) -> go.Figure:
 
 
 def _fold_table(rows: list) -> dash_table.DataTable:
-    # 程式化條件樣式（per-row 退化率顏色）
     cond = [
         {"if": {"row_index": "odd"}, "backgroundColor": "#1f1f1f"},
         {"if": {"filter_query": "{IS 均回報%} > 0", "column_id": "IS 均回報%"},
@@ -457,7 +436,6 @@ _WF_STOCK_COND = [
 
 
 def _per_stock_oos_rows(wf_results: list, trade_size: float) -> list:
-    """把所有有效 Fold 的 OOS 策略出場交易按 ticker 分組，逐股算 metrics。"""
     try:
         from collections import defaultdict
         by_ticker = defaultdict(list)
@@ -471,8 +449,6 @@ def _per_stock_oos_rows(wf_results: list, trade_size: float) -> list:
 
         rows = []
         for tk, trades in by_ticker.items():
-            # 用該股 OOS 交易按賣出日複利重建一條 equity，純為了算最大回撤（近似值）
-            # None-safe：_sell_date 為 None 的交易排到最後，避免 TypeError
             ordered = sorted(trades, key=lambda x: (x.get("_sell_date") is None, x.get("_sell_date")))
             cap, eq_rows = trade_size, []
             for t in ordered:
@@ -822,7 +798,7 @@ layout = html.Div([
         ], id="wf-max-pos-col", xs=6, md=2, className="mb-2",
            style={"display": "none"}),
         dbc.Col([
-            html.Label(" ", className="small text-muted mb-1 d-block"),
+            html.Label(" ", className="small text-muted mb-1 d-block"),
             dbc.Switch(
                 id="wf-use-pit",
                 label="🧬 PIT 股票池（修正生存者偏差）",
@@ -849,6 +825,7 @@ layout = html.Div([
     html.Small(id="wf-status", className="text-muted d-block mb-2"),
 
     dcc.Store(id="wf-job-store", data=None),
+    dcc.Store(id="wf-done-store", data=None),
     dcc.Interval(id="wf-progress-interval", interval=800, n_intervals=0, disabled=True),
     html.Div(id="wf-progress-section", className="mb-3"),
 
@@ -893,6 +870,7 @@ def cb_mode_change(mode):
     Output("wf-job-store",         "data"),
     Output("wf-progress-interval", "disabled"),
     Output("wf-progress-section",  "children"),
+    Output("wf-done-store",        "data",      allow_duplicate=True),
     Input("wf-btn",                "n_clicks"),
     State("wf-strategy",           "value"),
     State("wf-mode",               "value"),
@@ -935,40 +913,37 @@ def cb_run_wf(n_clicks, strategy, mode, ticker, total_period,
                      color="info", style={"height": "22px"}),
     ])
     print(f"[WF] cb_run_wf RET status_msg='⏳ 驗證進行中...' job={job_id[:8]}", flush=True)
-    return "⏳ 驗證進行中...", [], job_id, False, init_bar
+    return "⏳ 驗證進行中...", [], job_id, False, init_bar, None
 
 
-# ── Callback：輪詢進度 ────────────────────────────────────────────────
+# ── Callback：輪詢進度（輕量，偵測 done 後寫 store，不做重渲染）──────
 @callback(
     Output("wf-progress-section",  "children",  allow_duplicate=True),
     Output("wf-progress-interval", "disabled",  allow_duplicate=True),
     Output("wf-status",            "children",  allow_duplicate=True),
-    Output("wf-result",            "children",  allow_duplicate=True),
+    Output("wf-done-store",        "data"),
     Input("wf-progress-interval",  "n_intervals"),
     State("wf-job-store",          "data"),
     prevent_initial_call=True,
 )
 def cb_poll_progress(n_intervals, job_id):
     short = (job_id[:8] + "...") if job_id else "None"
-    in_jobs = _job_get(job_id) is not None if job_id else False
-    print(f"[WF] cb_poll       n={n_intervals} job={short} in_jobs={in_jobs} total_jobs={_job_count()}")
-    _cur_status = (_job_get(job_id) or {}).get("status") if job_id else None
-    print(f"[WF] cb_poll       status={_cur_status}", flush=True)
+    print(f"[WF] cb_poll       n={n_intervals} job={short} total_jobs={_job_count()}", flush=True)
 
     if not job_id:
-        # no active job at all → stop interval
         return no_update, True, no_update, no_update
-
-    if _job_get(job_id) is None:
-        print(f"[WF] cb_poll       job={short} not found yet (startup race), keep polling")
-        return no_update, False, no_update, no_update
 
     job = _job_get(job_id)
+    if job is None:
+        return no_update, False, no_update, no_update
 
-    if job is not None and job.get("status") == "consumed":
+    status = job.get("status")
+    print(f"[WF] cb_poll       status={status}", flush=True)
+
+    if status == "consumed":
         return no_update, True, no_update, no_update
 
-    if job["status"] == "running":
+    if status == "running":
         fold    = job.get("fold", 0)
         total   = job.get("total_folds", 0)
         current = job.get("current", "初始化...")
@@ -985,13 +960,37 @@ def cb_poll_progress(n_intervals, job_id):
                          striped=True, animated=True,
                          color="info", style={"height": "22px"}),
         ])
-        print(f"[WF] cb_poll RUNNING branch fold={fold}/{total}", flush=True)
         return progress_ui, False, "⏳ 驗證進行中...", no_update
 
-    # ── 完成 ──────────────────────────────────────────────────────────
-    print(f"[WF] cb_poll DONE  job={short}, rendering results")
+    # status == "done"：停 interval，把重渲染交給 cb_render_results
+    print(f"[WF] cb_poll DONE  job={short} → hand off to cb_render_results", flush=True)
+    done_bar = html.Div([
+        html.Small("✅ 計算完成，整理結果中...", className="text-success mb-1 d-block"),
+        dbc.Progress(value=100, color="success", style={"height": "22px"}),
+    ])
+    return done_bar, True, "⏳ 整理結果中...", {"job_id": job_id, "n": n_intervals}
+
+
+# ── Callback：渲染結果（只吃 done-store，觸發一次，不被 Interval supersede）──
+@callback(
+    Output("wf-result",           "children",  allow_duplicate=True),
+    Output("wf-status",           "children",  allow_duplicate=True),
+    Output("wf-progress-section", "children",  allow_duplicate=True),
+    Input("wf-done-store",        "data"),
+    prevent_initial_call=True,
+)
+def cb_render_results(done_data):
+    if not done_data or not done_data.get("job_id"):
+        return no_update, no_update, no_update
+
+    job_id   = done_data["job_id"]
     job_data = _job_get(job_id) or {}
-    _job_set(job_id, {"status": "consumed", "created_at": job_data.get("created_at", time.time())})
+    if job_data.get("status") != "done":
+        return no_update, no_update, no_update
+
+    _job_set(job_id, {"status": "consumed",
+                      "created_at": job_data.get("created_at", time.time())})
+
     wf_results   = job_data.get("result")
     is_portfolio = job_data.get("is_portfolio", False)
     err          = job_data.get("error")
@@ -1005,10 +1004,10 @@ def cb_poll_progress(n_intervals, job_id):
     use_pit      = params.get("use_pit", False)
 
     if err:
-        return [], True, err, dbc.Alert(err, color="warning", className="mt-2")
+        return dbc.Alert(err, color="warning", className="mt-2"), err, []
     if not wf_results:
         msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
-        return [], True, msg, dbc.Alert(msg, color="warning", className="mt-2")
+        return dbc.Alert(msg, color="warning", className="mt-2"), msg, []
 
     try:
         rows     = _build_rows(wf_results)
@@ -1018,11 +1017,7 @@ def cb_poll_progress(n_intervals, job_id):
         n_folds  = len(rows)
         mode_lbl = "投資組合" if is_portfolio else (ticker or "0700.HK").strip().upper()
 
-        if not rows:
-            msg = "⚠️ 沒有產生任何 Fold，請檢查數據週期或策略設定"
-            return [], True, msg, dbc.Alert(msg, color="warning", className="mt-2")
-
-        verdict    = _verdict_section(rows, is_portfolio, max_pos=max_pos, use_pit=use_pit)
+        verdict     = _verdict_section(rows, is_portfolio, max_pos=max_pos, use_pit=use_pit)
         bar_section = html.Div([
             html.H6("📊 IS vs OOS 平均每筆回報%", className="mb-1"),
             dcc.Graph(figure=_bar_chart(rows), config={"displayModeBar": False}),
@@ -1040,56 +1035,21 @@ def cb_poll_progress(n_intervals, job_id):
             html.H6(f"📑 逐 Fold 詳細數據（共 {n_folds} 個 Fold）", className="mb-1"),
             _fold_table(rows),
         ], className="mb-3")
-
         stock_section = _per_stock_section(wf_results, ts) if is_portfolio else html.Div()
 
-        status_str = (
-            f"✅ {mode_lbl} | {strategy} | "
-            f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | {n_folds} 個 Fold"
-        )
+        status_str = (f"✅ {mode_lbl} | {strategy} | "
+                      f"IS {is_mo_v}月 × OOS {oos_mo_v}月 | {n_folds} 個 Fold")
         done_bar = html.Div([
             html.Small(f"✅ 驗證完成：{n_folds} 個 Fold", className="text-success mb-1 d-block"),
             dbc.Progress(value=100, color="success", style={"height": "22px"}),
         ])
-
-        # ── 序列化探針：return 之前先試跑 JSON 編碼，揪出 Dash framework 層的序列化失敗 ──
-        try:
-            from dash._utils import to_json as _dash_to_json
-        except Exception:
-            _dash_to_json = None
-        if _dash_to_json is not None:
-            _sections_to_probe = [
-                ("verdict",       verdict),
-                ("bar_section",   bar_section),
-                ("deg_section",   deg_section),
-                ("oos_section",   oos_section),
-                ("stock_section", stock_section),
-                ("fold_section",  fold_section),
-                ("done_bar",      done_bar),
-            ]
-            for _name, _sec in _sections_to_probe:
-                try:
-                    _dash_to_json(_sec)
-                    print(f"[WF] probe OK    section={_name}", flush=True)
-                except Exception as _se:
-                    print(
-                        f"[WF] probe FAIL  section={_name}: {type(_se).__name__}: {_se}\n"
-                        + traceback.format_exc(),
-                        flush=True,
-                    )
-
-        print(
-            f"[WF] cb_poll DONE returned "
-            f"done_bar={type(done_bar).__name__} "
-            f"status_str_len={len(status_str)} "
-            f"result_children={len([*verdict, bar_section, deg_section, oos_section, stock_section, fold_section])}",
-            flush=True,
-        )
-        return done_bar, True, status_str, [*verdict, bar_section, deg_section, oos_section, stock_section, fold_section]
+        result_children = [*verdict, bar_section, deg_section,
+                           oos_section, stock_section, fold_section]
+        print(f"[WF] cb_render_results OK  folds={n_folds} children={len(result_children)}", flush=True)
+        return result_children, status_str, done_bar
 
     except Exception as e:
-        print(f"[WF] cb_poll RENDER ERROR: {e}\n{traceback.format_exc()}", flush=True)
-        return [], True, str(e), dbc.Alert(
-            [html.Strong("❌ 結果渲染失敗"), html.Br(), html.Code(str(e))],
-            color="danger", className="mt-2",
-        )
+        print(f"[WF] cb_render_results ERROR: {e}\n{traceback.format_exc()}", flush=True)
+        return (dbc.Alert([html.Strong("❌ 結果渲染失敗"), html.Br(), html.Code(str(e))],
+                          color="danger", className="mt-2"),
+                str(e), [])
