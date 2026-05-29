@@ -24,7 +24,7 @@ from indicators import calculate_indicators, precompute_signals
 from regime import detect_regime
 from config import (
     ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD,
-    REGIME_RECOMMENDATIONS, TV_URL, TV_HEADERS,
+    REGIME_RECOMMENDATIONS, TV_URL, TV_HEADERS, LIGHT_POSITION_PRESETS,
 )
 
 
@@ -135,7 +135,6 @@ def scan_all(presets: dict | None = None, current_month: int | None = None) -> l
     hits.sort(key=lambda h: (-h["n"], h["rsi"]))
     return hits
 
-
 def build_message(hits: list[dict], regime_label: str, date_str: str,
                   ma_gap_pct: float = 0.0, prefix: str = "") -> str:
     sign = "+" if ma_gap_pct >= 0 else ""
@@ -153,14 +152,21 @@ def build_message(hits: list[dict], regime_label: str, date_str: str,
     for h in hits:
         name = get_stock_name(h["ticker"])
         name_part = f" {name}" if name else ""
-        presets_str = ", ".join(h["presets"])
+        # 命中的輕倉策略加「⚠️輕倉」標記（提醒實盤勿重倉）
+        presets_disp = [
+            f"{p}⚠️輕倉" if p in LIGHT_POSITION_PRESETS else p
+            for p in h["presets"]
+        ]
+        presets_str = ", ".join(presets_disp)
         n = h.get("n", len(h["presets"]))
+        # 若全部命中策略都是輕倉，行尾再補一個總提示
+        all_light = all(p in LIGHT_POSITION_PRESETS for p in h["presets"])
+        tail = "｜⚠️ 僅輕倉策略命中" if all_light else ""
         lines.append(
             f"• {h['ticker']}{name_part}｜🎯共振 {n} 個"
-            f"｜{presets_str}｜RSI={h['rsi']}｜現價 {h['price']}"
+            f"｜{presets_str}｜RSI={h['rsi']}｜現價 {h['price']}{tail}"
         )
     return "\n".join(lines)
-
 
 def send_telegram(text: str) -> None:
     token   = os.environ["TELEGRAM_BOT_TOKEN"]
