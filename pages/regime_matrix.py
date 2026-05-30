@@ -7,7 +7,79 @@ import pandas as pd
 from data import get_stock_data, load_stocks, batch_download
 from indicators import calculate_indicators
 from walk_forward import run_portfolio_walk_forward
-from config import ACTIVE_PRESETS, STRATEGY_PRESETS, COMMISSION_PCT
+# ══════════════════════════════════════════════════════════════════
+# regime_matrix.py 防呆閘 patch（V22.1）
+# 只影響 🏆 各制度最佳策略摘要表，不影響上方矩陣本體。
+# 共三處改動，按 ①②③ 貼入對應位置，貼完務必 python -m py_compile pages/regime_matrix.py
+# ══════════════════════════════════════════════════════════════════
+
+
+# ── ① 修改 import（檔頭那行 from config import ... 整行換成下面這行）──────
+from config import ACTIVE_PRESETS, STRATEGY_PRESETS, COMMISSION_PCT, LIGHT_POSITION_PRESETS
+
+
+# ── ② 新增常數（貼在 REGIME_DISPLAY = {...} 那塊之後，與其他模組常數一起）──
+# 冠軍表防呆閘門檻（可自行調整；只作用於摘要表，不影響矩陣本體）
+SUMMARY_MIN_TRADES    = 10    # 制度桶最低 OOS 交易數（低於此不具冠軍資格）
+SUMMARY_MIN_FOLDS     = 2     # 制度桶最低涉及 Fold 數（擋單一 Fold 的僥倖）
+SUMMARY_EXCLUDE_LIGHT = True  # 排除 LIGHT_POSITION_PRESETS（⚠️輕倉策略不選為冠軍）
+
+
+# ── ③ 整個 _build_summary_table 換成下面這版 ──────────────────────────────
+def _build_summary_table(srm: dict):
+    """Best strategy per regime, with robustness gate.
+
+    冠軍只從通過防呆閘的制度桶中挑選：
+      • 桶內 OOS 交易數 >= SUMMARY_MIN_TRADES
+      • 桶內涉及 Fold 數 >= SUMMARY_MIN_FOLDS
+      • 若 SUMMARY_EXCLUDE_LIGHT，排除 LIGHT_POSITION_PRESETS（⚠️輕倉）
+    通不過的制度顯示「—（無足夠樣本）」，避免薄樣本噪音被捧成冠軍。
+    此閘只影響本摘要表，上方矩陣本體不受影響。
+    """
+    best = {}
+    for name, rd in srm.items():
+        if SUMMARY_EXCLUDE_LIGHT and name in LIGHT_POSITION_PRESETS:
+            continue
+        for regime in REGIMES:
+            m = rd.get(regime)
+            if m is None:
+                continue
+            if m["n"] < SUMMARY_MIN_TRADES:
+                continue
+            if m["folds"] < SUMMARY_MIN_FOLDS:
+                continue
+            if regime not in best or m["avg_ret"] > best[regime]["avg_ret"]:
+                best[regime] = {"策略": name, **m}
+
+    columns = [
+        {"name": "制度",     "id": "制度"},
+        {"name": "最佳策略", "id": "策略"},
+        {"name": "均回報%",  "id": "ret"},
+        {"name": "勝率%",    "id": "wr"},
+        {"name": "OOS交易數", "id": "n"},
+        {"name": "涉及Fold", "id": "folds"},
+    ]
+
+    rows = []
+    for regime in REGIMES:
+        disp = REGIME_DISPLAY.get(regime, regime)
+        b = best.get(regime)
+        if b is None:
+            rows.append({
+                "制度": disp, "策略": "—（無足夠樣本）",
+                "ret": "—", "wr": "—", "n": "—", "folds": "—",
+            })
+            continue
+        sign = "+" if b["avg_ret"] > 0 else ""
+        rows.append({
+            "制度":  disp,
+            "策略":  b["策略"],
+            "ret":   f"{sign}{b['avg_ret']:.2f}%",
+            "wr":    f"{b['win_rate']:.1f}%",
+            "n":     b["n"],
+            "folds": b["folds"],
+        })
+    return columns, rows
 from regime import detect_regime
 
 dash.register_page(__name__, path="/regime-matrix", name="制度矩陣")
@@ -184,46 +256,6 @@ def _build_matrix_table(srm: dict):
         rows.append(row)
 
     return columns, rows, styles
-
-
-def _build_summary_table(srm: dict):
-    """Best strategy per regime."""
-    best = {}
-    for name, rd in srm.items():
-        for regime in REGIMES:
-            m = rd.get(regime)
-            if m is None:
-                continue
-            if regime not in best or m["avg_ret"] > best[regime]["avg_ret"]:
-                best[regime] = {"策略": name, **m}
-
-    if not best:
-        return [], []
-
-    columns = [
-        {"name": "制度",     "id": "制度"},
-        {"name": "最佳策略", "id": "策略"},
-        {"name": "均回報%",  "id": "ret"},
-        {"name": "勝率%",    "id": "wr"},
-        {"name": "OOS交易數","id": "n"},
-        {"name": "涉及Fold", "id": "folds"},
-    ]
-    rows = []
-    for regime in REGIMES:
-        if regime not in best:
-            continue
-        b    = best[regime]
-        sign = "+" if b["avg_ret"] > 0 else ""
-        rows.append({
-            "制度":  REGIME_DISPLAY.get(regime, regime),
-            "策略":  b["策略"],
-            "ret":   f"{sign}{b['avg_ret']:.2f}%",
-            "wr":    f"{b['win_rate']:.1f}%",
-            "n":     b["n"],
-            "folds": b["folds"],
-        })
-    return columns, rows
-
 
 # ══════════════════════════════════════════════════════════════════
 # Custom strategy bar chart

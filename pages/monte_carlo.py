@@ -58,10 +58,15 @@ def _section(title: str, children):
 # Monte Carlo 核心運算
 # ══════════════════════════════════════════════════════════════════
 def _run_mc(returns_pct: list, n_sim: int, initial_capital: float,
-            block_size: int = 0) -> tuple:
+            block_size: int = 0, fraction: float = 1.0) -> tuple:
     """
     Block Bootstrap 重採樣，保留時序相關性。
-    返回 (equity_matrix, actual_block_size)，equity_matrix shape: (n_sim, n_trades+1)。
+    倉位模型：固定比例滾倉（每筆押當前權益的 fraction，賺厚虧縮）。
+        equity_t = initial_capital * Π_{i<=t} (1 + fraction * r_i)
+    fraction<1 時權益恆 > 0，不會爆也不會因連虧而假破產；破產率/VaR 才有實盤意義。
+    返回 (equity_matrix, sampled_returns, actual_block_size)。
+        equity_matrix   shape: (n_sim, n_trades+1)
+        sampled_returns shape: (n_sim, n_trades)  ← 供 Sharpe 用（尺度無關）
     block_size=0 自動設為 max(2, sqrt(n))。block_size>=n 退化為 i.i.d.（bs=1）。
     """
     arr = np.array(returns_pct, dtype=float) / 100.0
@@ -74,10 +79,22 @@ def _run_mc(returns_pct: list, n_sim: int, initial_capital: float,
     starts_idx = np.random.randint(0, max_start + 1, size=(n_sim, n_blocks))
     offsets    = np.arange(bs)
     idx        = (starts_idx[:, :, None] + offsets[None, None, :]).reshape(n_sim, -1)[:, :n]
-    sampled    = arr[idx]
-    growth     = np.cumprod(1.0 + sampled, axis=1)
-    s          = np.ones((n_sim, 1))
-    return initial_capital * np.hstack([s, growth]), bs
+    sampled    = arr[idx]                              # (n_sim, n) 每筆 fractional 回報
+
+    # 固定比例滾倉：每筆押當前權益的 fraction，賺厚虧縮（複利但有節制）。
+    # factor = 1 + fraction * r；fraction<=1 且 r>=-1 時 factor>=0，權益恆 >= 0。
+    factors = 1.0 + fraction * sampled
+    growth  = np.cumprod(factors, axis=1)
+    ones    = np.ones((n_sim, 1))
+    units   = np.hstack([ones, growth])                # 權益（以初始資金為單位）
+
+    # 破產屏障（安全網）：權益觸 0 後永久維持 0、不復活。
+    # fraction<1 時幾乎不觸發；用於界定回撤上限並涵蓋 fraction=100% 的單筆 -100% 邊界。
+    ruined_after = np.maximum.accumulate(units <= 0.0, axis=1)   # 首次觸 0 後恆 True
+    units        = np.where(ruined_after, 0.0, units)
+
+    equity = initial_capital * units
+    return equity, sampled, bs
 
 
 def _max_drawdown_vec(equity_matrix: np.ndarray) -> np.ndarray:
@@ -86,14 +103,6 @@ def _max_drawdown_vec(equity_matrix: np.ndarray) -> np.ndarray:
     peak = np.maximum.accumulate(equity_matrix, axis=1)
     dd   = (equity_matrix - peak) / peak          # ≤ 0
     return dd.min(axis=1) * 100                   # most negative per row
-
-
-def _sharpe_vec(equity_matrix: np.ndarray) -> np.ndarray:
-    """每條曲線的簡化 Sharpe（以每筆回報%計）"""
-    step_returns = np.diff(equity_matrix, axis=1) / equity_matrix[:, :-1]
-    mean_r = step_returns.mean(axis=1)
-    std_r  = step_returns.std(axis=1) + 1e-9
-    return mean_r / std_r
 
 
 def _collect_portfolio_trades(strategy, tickers, period, capital, slippage_pct, commission_pct):
@@ -232,6 +241,12 @@ layout = html.Div([
             html.Label("Block 大小 (0=自動)", className="small text-muted mb-1 d-block"),
             dbc.Input(id="mc-block-size", value=0, type="number",
                       min=0, max=50, step=1, size="sm"),
+        ], xs=6, md=1, className="mb-2"),
+
+        dbc.Col([
+            html.Label("每筆佔用資金 %", className="small text-muted mb-1 d-block"),
+            dbc.Input(id="mc-fraction", value=10, type="number",
+                      min=1, max=100, step=1, size="sm"),
         ], xs=6, md=1, className="mb-2"),
 
         dbc.Col([
@@ -491,17 +506,19 @@ dash.clientside_callback(
     State("mc-commission",  "value"),
     State("mc-nsim",             "value"),
     State("mc-block-size",       "value"),
+    State("mc-fraction",         "value"),
     State("mc-mode",             "value"),
     State("mc-portfolio-tickers","value"),
     prevent_initial_call=True,
 )
-def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commission, n_sim, block_size, mode, portfolio_tickers):
+def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commission, n_sim, block_size, fraction, mode, portfolio_tickers):
 
     # ── 參數清理 ──────────────────────────────────────────────────
     capital         = float(capital or 100_000)
     slippage_pct    = float(slippage or 0.10) / 100
     commission_pct  = float(commission or 0.26) / 100
     n_sim           = max(100, min(int(n_sim or 1000), 5000))
+    fraction        = max(1.0, min(float(fraction or 10), 100.0)) / 100.0
     is_portfolio    = (mode == "portfolio")
 
     preset = STRATEGY_PRESETS.get(strategy)
@@ -565,11 +582,11 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
 
     # ── 執行 MC 模擬 ───────────────────────────────────────────────
     np.random.seed(None)   # 每次隨機
-    eq, actual_bs = _run_mc(returns, n_sim, capital, int(block_size or 0))
+    eq, sampled, actual_bs = _run_mc(returns, n_sim, capital, int(block_size or 0), fraction)
 
     final_eq   = eq[:, -1]
     max_dds    = _max_drawdown_vec(eq)
-    sharpes    = _sharpe_vec(eq)
+    sharpes    = sampled.mean(axis=1) / (sampled.std(axis=1) + 1e-9)
 
     # ── 彙總統計 ───────────────────────────────────────────────────
     def _pct(a, p): return float(np.percentile(a, p))
@@ -928,12 +945,12 @@ def run_simulation(_clicks, strategy, ticker, period, capital, slippage, commiss
     if is_portfolio:
         status = (
             f"✅ 投資組合模式 | {ticker_count} 隻股票 | {total_trades} 筆交易 | "
-            f"{n_sim:,} 次模擬完成 | 破產率 {bankruptcy_rate:.1f}% | block={actual_bs}"
+            f"{n_sim:,} 次模擬完成 | 破產率 {bankruptcy_rate:.1f}% | block={actual_bs} | 每筆 {fraction*100:.0f}%"
         )
     else:
         status = (
             f"✅ {ticker} × {strategy} | "
             f"{n_trades} 筆歷史交易 | {n_sim:,} 次模擬完成 | "
-            f"破產率 {bankruptcy_rate:.1f}% | 虧損率 {loss_rate:.1f}% | block={actual_bs}"
+            f"破產率 {bankruptcy_rate:.1f}% | 虧損率 {loss_rate:.1f}% | block={actual_bs} | 每筆 {fraction*100:.0f}%"
         )
     return status, results
