@@ -27,6 +27,9 @@ from config import (
     REGIME_RECOMMENDATIONS, TV_URL, TV_HEADERS, LIGHT_POSITION_PRESETS,
 )
 
+# 實盤帳本（附加功能：失敗只印 log，不影響掃描 + Telegram 主流程）
+import paper_ledger as pl
+
 
 # ── 實盤策略白名單：只有 💎 已通過 PIT WF 的策略可推播 ──────────────
 LIVE_PRESETS = {name: p for name, p in ACTIVE_PRESETS.items() if name.startswith("💎")}
@@ -176,6 +179,75 @@ def send_telegram(text: str) -> None:
     resp.raise_for_status()
 
 
+# ── 帳本：價格 / 訊號注入函式 ────────────────────────────────────────────────
+def _make_market_fns() -> tuple:
+    """
+    建立 price_fn / sig_fn 供 paper_ledger 用，兩者共用記憶化 snapshot，
+    避免同一 ticker 在 pending_buy / open / pending_sell 處理時重複抓取。
+    用 6mo 數據（確保 BB warmup 充足，與 scan_all 一致；get_stock_data 已有 diskcache）。
+      price_fn(ticker) -> {"date": date, "open": float} 或 None
+      sig_fn(ticker)   -> {"date": date, "s2": bool, "dates": [date,...]} 或 None
+    """
+    cache: dict = {}
+
+    def _snapshot(ticker: str):
+        if ticker in cache:
+            return cache[ticker]
+        snap = None
+        try:
+            raw = get_stock_data(ticker, "6mo")
+            if not raw.empty and len(raw) >= MIN_BARS_FOR_INDICATORS:
+                df = calculate_indicators(raw)
+                sigs = precompute_signals(df)
+                last = df.iloc[-1]
+                snap = {
+                    "date":  df.index[-1].date(),
+                    "open":  float(last["Open"]),
+                    "s2":    bool(sigs["s2"].iloc[-1]),
+                    "dates": [d.date() for d in df.index],
+                }
+        except Exception as e:
+            print(f"[LEDGER][{ticker}] snapshot 失敗：{type(e).__name__}: {e}", flush=True)
+        cache[ticker] = snap
+        return snap
+
+    def price_fn(ticker: str):
+        s = _snapshot(ticker)
+        return {"date": s["date"], "open": s["open"]} if s else None
+
+    def sig_fn(ticker: str):
+        s = _snapshot(ticker)
+        return {"date": s["date"], "s2": s["s2"], "dates": s["dates"]} if s else None
+
+    return price_fn, sig_fn
+
+
+def _run_ledger(hits: list, date_str: str) -> str:
+    """
+    更新實盤帳本並回傳 Telegram 摘要尾巴。整段 try/except 包住：
+    env 缺失或任何失敗都只印 log 回 ""，絕不拖垮掃描 + Telegram 主流程。
+    即使今日 0 hit（心跳 / 熊市閘門）也照跑 pending/open 處理
+    （可能有昨天的 pending_buy 要成交、或持倉觸發 s2 要平倉）。
+    """
+    if not pl.is_enabled():
+        print("[LEDGER] 未設定 GH_TOKEN / GH_REPO，跳過帳本更新", flush=True)
+        return ""
+    try:
+        price_fn, sig_fn = _make_market_fns()
+        trades, sha = pl.load_ledger()
+        pl.process_pending_buys(trades, price_fn)         # 1. 昨日訊號 → 今日開盤成交
+        pl.process_open_positions(trades, sig_fn, price_fn)  # 2. s2 出場（T+1）
+        pl.record_new_signals(trades, hits, date_str)     # 3. 今日新訊號 → pending_buy
+        pl.save_ledger(trades, sha, f"chore(ledger): update {date_str}")
+        summary = pl.summarize(trades)
+        return pl.format_ledger_summary(summary)
+    except Exception as e:
+        print(f"[LEDGER] 帳本更新失敗（不影響主流程）：{type(e).__name__}: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return ""
+
+
 def main() -> int:
     hkt_now = datetime.now(timezone(timedelta(hours=8)))
     date_str = hkt_now.strftime("%Y-%m-%d")
@@ -190,9 +262,12 @@ def main() -> int:
         # ── 熊市閘門：不執行任何掃描 ──
         if label in BEAR_LABELS_HARD:
             print(f"[GATE] 熊市制度（{label}），不執行掃描", flush=True)
-            send_telegram(
-                f"⛔ [制度閘門] 當前制度：{label}，全策略暫停，今日 0 個買入訊號"
-            )
+            gate_msg = f"⛔ [制度閘門] 當前制度：{label}，全策略暫停，今日 0 個買入訊號"
+            # 熊市閘門只停「新買入訊號」，既有持倉仍要管理（成交 / s2 平倉）
+            tail = _run_ledger([], date_str)
+            if tail:
+                gate_msg += "\n\n" + tail
+            send_telegram(gate_msg)
             return 0
 
         FULL_SCAN_LABELS = {"強牛市", "弱牛市"}
@@ -223,10 +298,16 @@ def main() -> int:
             )
             if prefix:
                 heartbeat = prefix + "\n" + heartbeat
+            tail = _run_ledger([], date_str)
+            if tail:
+                heartbeat += "\n\n" + tail
             send_telegram(heartbeat)
             return 0
 
         message = build_message(hits, label, date_str, ma_gap_pct=ma_gap_pct, prefix=prefix)
+        tail = _run_ledger(hits, date_str)
+        if tail:
+            message += "\n\n" + tail
         print(f"[SCAN] {date_str} 命中 {len(hits)} 隻，發送 Telegram", flush=True)
         print(message, flush=True)
         send_telegram(message)
