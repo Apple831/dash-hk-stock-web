@@ -1,0 +1,20 @@
+[
+  {
+    "id": "9911.HK|💎 b18 Z-Score資金流向|2026-06-01",
+    "ticker": "9911.HK",
+    "strategy": "💎 b18 Z-Score資金流向",
+    "resonance_n": 1,
+    "status": "pending_buy",
+    "signal_date": "2026-06-01",
+    "entry_date": null,
+    "entry_px": null,
+    "sell_signal_date": null,
+    "exit_date": null,
+    "exit_px": null,
+    "return_pct": null,
+    "hold_bars": null,
+    "exit_reason": null,
+    "min_hold_days": 5,
+    "trade_size": 100000
+  }
+]
