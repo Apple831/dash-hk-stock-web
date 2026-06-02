@@ -44,7 +44,7 @@ def _job_count() -> int:
 
 from data import get_cached, load_stocks
 from indicators import calculate_indicators
-from walk_forward import run_walk_forward, run_portfolio_walk_forward
+from walk_forward import run_walk_forward, run_portfolio_walk_forward, _extended_summary
 from backtest import calc_bt_metrics
 from config import (
     STRATEGY_PRESETS,
@@ -89,6 +89,8 @@ FOLD_COLS = [
     {"name": "OOS勝率%",   "id": "OOS 勝率%"},
     {"name": "IS 交易數",  "id": "IS 交易數"},
     {"name": "OOS交易數",  "id": "OOS 交易數"},
+    {"name": "強制平倉",   "id": "強制平倉數"},
+    {"name": "延伸追蹤",   "id": "延伸追蹤數"},
     {"name": "有效",       "id": "有效"},
     {"name": "股票數",     "id": "股票數"},
     {"name": "過濾原因",   "id": "過濾原因"},
@@ -118,6 +120,8 @@ def _build_rows(wf_results: list) -> list:
                 "OOS 勝率%":   "—",
                 "IS 交易數":   "—",
                 "OOS 交易數":  "—",
+                "強制平倉數":  "—",
+                "延伸追蹤數":  "—",
                 "有效":        "⏭️ 跳過",
                 "股票數":      "—",
                 "過濾原因":    r.get("filter_reason", "⛔ 熊市"),
@@ -130,6 +134,8 @@ def _build_rows(wf_results: list) -> list:
         is_ret  = im.get("平均每筆回報%", 0.0)
         oos_ret = om.get("平均每筆回報%", 0.0)
         deg     = _degradation(is_ret, oos_ret)
+        forced_n   = r.get("forced_exit_count", 0)
+        extended_n = r.get("extended_count", 0)
         rows.append({
             "Fold":        r["fold"],
             "IS 期間":     f"{r['is_start'].strftime('%Y-%m')} → {r['is_end'].strftime('%Y-%m')}",
@@ -141,6 +147,8 @@ def _build_rows(wf_results: list) -> list:
             "OOS 勝率%":   round(om.get("勝率%", 0.0), 1),
             "IS 交易數":   im.get("交易次數", 0),
             "OOS 交易數":  r["oos_trade_count"],
+            "強制平倉數":  forced_n,
+            "延伸追蹤數":  extended_n,
             "有效":        "✅" if r["valid_oos"] else f"⚠️ {r['oos_trade_count']}筆",
             "股票數":      r.get("pit_stock_count", r.get("n_stocks", 0)),
             "過濾原因":    "",
@@ -245,6 +253,125 @@ def _verdict_section(rows: list, is_portfolio: bool, max_pos: int = 0, use_pit: 
             ], className="mb-3")
         ] if use_pit else []),
     ]
+
+
+# ══════════════════════════════════════════════════════════════════
+# 🔍 延伸追蹤 + survivorship bias 警示
+# （從 Streamlit 版 show_walk_forward_results 移植回 Dash）
+# 把原本在 Fold 邊界被強制平倉的交易，用全期數據繼續持有到真實 sell
+# 信號（或 365 日上限），比對「真實均回報」vs「WF OOS 指標」。
+# 若真實均回報明顯低於 OOS 指標 → 疑似 survivorship bias。
+# ══════════════════════════════════════════════════════════════════
+def _extended_section(wf_results: list, rows: list) -> html.Div:
+    valid_rows = [r for r in rows if r["_valid_oos"] and r["_deg_raw"] is not None]
+    if not valid_rows:
+        return html.Div()
+    avg_oos = sum(r["OOS 均回報%"] for r in valid_rows) / len(valid_rows)
+
+    total_forced = sum(r.get("forced_exit_count", 0) for r in wf_results)
+    all_extended = [t for r in wf_results for t in r.get("oos_extended_trades", [])]
+    ext = _extended_summary(all_extended)
+
+    # 完全沒有強制平倉 → 無 survivorship 疑慮，給一行綠字確認即可
+    if total_forced == 0:
+        return html.Div([
+            html.H6("🔍 延伸追蹤：強制平倉檢查", className="mb-2 mt-2"),
+            dbc.Alert(
+                "✅ 本次驗證沒有任何 Fold 邊界強制平倉，OOS 指標完整反映策略出場，"
+                "無 survivorship bias 疑慮。",
+                color="success", className="py-2 mb-2",
+            ),
+        ], className="mb-3")
+
+    closed = ext.get("closed", 0)
+
+    def _mc(label, value, color="white", sub=None):
+        body = [
+            html.Div(label, className="small text-muted mb-1"),
+            html.Div(value, className="fw-bold",
+                     style={"color": color, "fontSize": "1.0rem"}),
+        ]
+        if sub:
+            body.append(html.Small(sub, className="text-muted"))
+        return dbc.Col(dbc.Card(dbc.CardBody(body, className="py-2 px-3")),
+                       xs=6, md=3, className="mb-2")
+
+    children = [
+        html.H6("🔍 延伸追蹤：強制平倉交易的真實結果", className="mb-2 mt-2"),
+        html.Small(
+            "把原本在 Fold 邊界被強制平倉的交易保留，用全期數據繼續持有到真實 sell 信號"
+            "（或 365 日上限）。純診斷用途，不計入上方 WF 指標。",
+            className="text-muted d-block mb-2",
+            style={"fontSize": "0.8rem"},
+        ),
+    ]
+
+    if closed == 0:
+        # 有強制平倉但延伸後全部仍未觸發出場 → 真實結果不可知
+        still = ext.get("still_held", 0)
+        children.append(dbc.Alert(
+            f"ℹ️ 全程 {total_forced} 筆期末強制平倉，延伸追蹤後 {still} 筆即使持有 365 日"
+            "仍未觸發真實 sell 信號，真實結果不可知。OOS 指標僅反映「跑完全程」的交易，"
+            "請對 OOS 數字保留戒心。",
+            color="warning", className="py-2 mb-2",
+        ))
+        return html.Div(children, className="mb-3")
+
+    ext_avg  = ext.get("avg_return", 0.0)
+    ext_wr   = ext.get("win_rate", 0.0)
+    ext_days = ext.get("avg_days", 0.0)
+    still    = ext.get("still_held", 0)
+
+    children.append(dbc.Row([
+        _mc("真實出場交易數", f"{closed} 筆",
+            sub=f"共 {ext.get('total', closed)} 筆中"),
+        _mc("真實出場均回報%", f"{'+' if ext_avg >= 0 else ''}{ext_avg:.2f}%",
+            "#26a69a" if ext_avg >= 0 else "#ef5350",
+            sub=f"vs OOS 指標 {avg_oos:+.2f}%"),
+        _mc("真實出場勝率", f"{ext_wr:.1f}%"),
+        _mc("平均持倉天數", f"{ext_days:.0f} 天"),
+    ], className="g-2 mb-2"))
+
+    # ── 核心守門邏輯：survivorship bias 判定 ──
+    if ext_avg < avg_oos - 3:
+        children.append(dbc.Alert([
+            html.Strong("⚠️ 警示：疑似 survivorship bias"),
+            html.Br(),
+            html.Small(
+                f"WF 指標 OOS {avg_oos:+.2f}%，但把原本被強制平倉的交易加回後，"
+                f"真實均回報只有 {ext_avg:+.2f}%。原本的高 OOS 數字很可能只統計了"
+                "「跑完全程、觸發到真實出場」的贏家，被排除的平庸/虧損單沒被計入。"
+                "此策略的 OOS 數字不可信，請勿據此實盤或升 💎。"
+            ),
+        ], color="danger", className="py-2 mb-2"))
+    elif ext_avg > avg_oos:
+        children.append(dbc.Alert([
+            html.Strong("✅ 無 survivorship bias"),
+            html.Br(),
+            html.Small(
+                f"強制平倉交易的真實結果（{ext_avg:+.2f}%）比 WF OOS 指標"
+                f"（{avg_oos:+.2f}%）更好，說明 OOS 數字沒有高估策略，策略紮實。"
+            ),
+        ], color="success", className="py-2 mb-2"))
+    else:
+        children.append(dbc.Alert([
+            html.Strong("🟡 輕微差距，尚可接受"),
+            html.Br(),
+            html.Small(
+                f"真實均回報 {ext_avg:+.2f}% 略低於 OOS 指標 {avg_oos:+.2f}%，"
+                "但差距在 3% 以內，無明顯 survivorship bias。"
+            ),
+        ], color="warning", className="py-2 mb-2"))
+
+    if still > 0:
+        children.append(html.Small(
+            f"ℹ️ 另有 {still} 筆即使延伸 365 日仍未觸發 sell 信號，按延伸期末收盤計算，"
+            "這類交易的真實結果仍不可知。",
+            className="text-muted d-block",
+            style={"fontSize": "0.78rem"},
+        ))
+
+    return html.Div(children, className="mb-3")
 
 
 def _bar_chart(rows: list) -> go.Figure:
@@ -388,6 +515,9 @@ def _fold_table(rows: list) -> dash_table.DataTable:
          "color": "#26a69a", "fontWeight": "bold"},
         {"if": {"filter_query": "{OOS 均回報%} < 0", "column_id": "OOS 均回報%"},
          "color": "#ef5350", "fontWeight": "bold"},
+        # 強制平倉數醒目標示：>0 用黃字提醒「這欄有被排除的交易」
+        {"if": {"filter_query": "{強制平倉數} > 0", "column_id": "強制平倉數"},
+         "color": "#f9a825", "fontWeight": "bold"},
     ]
     for i, r in enumerate(rows):
         d = r["_deg_raw"]
@@ -1031,6 +1161,8 @@ def cb_render_results(done_data):
             dcc.Graph(figure=_oos_equity_chart(wf_results, ts),
                       config={"displayModeBar": False}),
         ], className="mb-3")
+        # ★ 補回延伸追蹤 + survivorship bias 警示（遷移時漏掉的守門員）
+        extended_section = _extended_section(wf_results, rows)
         fold_section = html.Div([
             html.H6(f"📑 逐 Fold 詳細數據（共 {n_folds} 個 Fold）", className="mb-1"),
             _fold_table(rows),
@@ -1044,7 +1176,8 @@ def cb_render_results(done_data):
             dbc.Progress(value=100, color="success", style={"height": "22px"}),
         ])
         result_children = [*verdict, bar_section, deg_section,
-                           oos_section, stock_section, fold_section]
+                           oos_section, extended_section,
+                           stock_section, fold_section]
         print(f"[WF] cb_render_results OK  folds={n_folds} children={len(result_children)}", flush=True)
         return result_children, status_str, done_bar
 
