@@ -287,12 +287,58 @@ def summarize(trades: list) -> dict:
     }
 
 
+def _format_resonance_line(by_resonance: dict) -> str:
+    """
+    把 by_resonance（{resonance_n: {n, win_rate, avg_ret}}）壓成共振 1 / 2 / 3+ 三桶，
+    回一行繁中摘要；無已平倉資料回空字串（呼叫端判斷是否附加）。
+    這正是當初記 resonance_n 的目的：檢驗「共振越多勝率越高？」。
+    """
+    if not by_resonance:
+        return ""
+    buckets: dict = {"1": [], "2": [], "3+": []}
+    for k, v in by_resonance.items():
+        if k is None:
+            continue
+        key = "1" if k == 1 else ("2" if k == 2 else "3+")
+        buckets[key].append(v)
+
+    parts = []
+    for key in ("1", "2", "3+"):
+        items = buckets[key]
+        tot_n = sum(i["n"] for i in items)
+        if tot_n == 0:
+            continue
+        # 加權平均勝率 / 平均回報（各 resonance_n 的樣本數加權）
+        wr  = sum(i["win_rate"] * i["n"] for i in items) / tot_n
+        ret = sum(i["avg_ret"] * i["n"]  for i in items) / tot_n
+        sign = "+" if ret >= 0 else ""
+        parts.append(f"共振{key}：勝率{wr:.0f}% 均{sign}{ret:.2f}%（{tot_n}筆）")
+    if not parts:
+        return ""
+    return "🎯 共振分析｜" + " ｜ ".join(parts)
+
+
 def format_ledger_summary(summary: dict) -> str:
-    """組一段簡短繁中文字給 Telegram 尾巴。"""
+    """
+    組一段簡短繁中文字給 Telegram 尾巴。
+
+    V22.2（2026-06-02 AUDIT-G 🟡-1）：除了原本 5 個欄位，補上每天都算但從不外露的
+    avg_return_pct、avg_hold_days，以及 by_resonance（共振數→勝率，記 resonance_n 的本意）。
+    """
     total = summary["total_return_pct"]
     sign = "+" if total >= 0 else ""
-    return (
+    avg_ret = summary.get("avg_return_pct", 0.0)
+    avg_sign = "+" if avg_ret >= 0 else ""
+
+    lines = [
         f"📒 帳本：已平倉 {summary['closed_n']} 筆 ｜ "
         f"總 {sign}{total}% ｜ 勝率 {summary['win_rate']}% ｜ "
-        f"持倉中 {summary['open_n']} 筆 ｜ 待成交 {summary['pending_n']} 筆"
-    )
+        f"持倉中 {summary['open_n']} 筆 ｜ 待成交 {summary['pending_n']} 筆",
+        f"　　平均每筆 {avg_sign}{avg_ret}% ｜ 平均持倉 {summary.get('avg_hold_days', 0.0)} 天",
+    ]
+
+    res_line = _format_resonance_line(summary.get("by_resonance", {}))
+    if res_line:
+        lines.append(res_line)
+
+    return "\n".join(lines)

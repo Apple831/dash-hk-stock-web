@@ -34,6 +34,7 @@ navbar = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink("🔬 Walk-Forward", href="/walkforward")),
         dbc.NavItem(dbc.NavLink("🗺️ 制度矩陣",    href="/regime-matrix")),
         dbc.NavItem(dbc.NavLink("🎲 Monte Carlo",    href="/monte-carlo")),
+        dbc.NavItem(dbc.NavLink("📒 實盤帳本",    href="/ledger")),
         # 下載狀態文字（diskcache 準備好後更新）
         dbc.NavItem(
             html.Small(id="dl-navbar-status", className="text-muted me-2 mt-1"),

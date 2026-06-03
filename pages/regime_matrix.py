@@ -8,32 +8,44 @@ from data import get_stock_data, load_stocks, batch_download
 from indicators import calculate_indicators
 from walk_forward import run_portfolio_walk_forward
 # ══════════════════════════════════════════════════════════════════
-# regime_matrix.py 防呆閘 patch（V22.1）
+# regime_matrix.py 防呆閘 + survivorship 守門員（V22.1 → V22.2 AUDIT-G）
 # 只影響 🏆 各制度最佳策略摘要表，不影響上方矩陣本體。
-# 共三處改動，按 ①②③ 貼入對應位置，貼完務必 python -m py_compile pages/regime_matrix.py
+# V22.2（2026-06-02 AUDIT-G 🟡-2/🟡-3）：
+#   • 冠軍表沿用引擎現成的延伸追蹤（oos_extended_trades）做 survivorship 檢查，
+#     真實出場均回報 < 該制度 OOS − 3% → 冠軍標「⚠️疑survivorship」並顯示真實出場%。
+#   • _run_strategy 明確帶 track_extended=True（以前預設開但算完丟＝白燒，現在真被消費）。
+# 貼完務必 python -m py_compile pages/regime_matrix.py
 # ══════════════════════════════════════════════════════════════════
 
 
-# ── ① 修改 import（檔頭那行 from config import ... 整行換成下面這行）──────
+# ── ① import ──────────────────────────────────────────────────────────────
 from config import ACTIVE_PRESETS, STRATEGY_PRESETS, COMMISSION_PCT, LIGHT_POSITION_PRESETS
 
 
-# ── ② 新增常數（貼在 REGIME_DISPLAY = {...} 那塊之後，與其他模組常數一起）──
+# ── ② 摘要表防呆閘 + survivorship 門檻常數 ──────────────────────────────────
 # 冠軍表防呆閘門檻（可自行調整；只作用於摘要表，不影響矩陣本體）
-SUMMARY_MIN_TRADES    = 10    # 制度桶最低 OOS 交易數（低於此不具冠軍資格）
-SUMMARY_MIN_FOLDS     = 2     # 制度桶最低涉及 Fold 數（擋單一 Fold 的僥倖）
-SUMMARY_EXCLUDE_LIGHT = True  # 排除 LIGHT_POSITION_PRESETS（⚠️輕倉策略不選為冠軍）
+SUMMARY_MIN_TRADES        = 10    # 制度桶最低 OOS 交易數（低於此不具冠軍資格）
+SUMMARY_MIN_FOLDS         = 2     # 制度桶最低涉及 Fold 數（擋單一 Fold 的僥倖）
+SUMMARY_EXCLUDE_LIGHT     = True  # 排除 LIGHT_POSITION_PRESETS（⚠️輕倉策略不選為冠軍）
+SUMMARY_SURVIVORSHIP_GAP  = 3.0   # 真實出場均回報 < 制度 OOS − 此值 → 標 survivorship 警示
+                                  #（與 pages/walkforward.py::_extended_section 同口徑）
 
 
-# ── ③ 整個 _build_summary_table 換成下面這版 ──────────────────────────────
+# ── ③ 整個 _build_summary_table（加 survivorship 守門員 + 真實出場%欄）─────────
 def _build_summary_table(srm: dict):
-    """Best strategy per regime, with robustness gate.
+    """Best strategy per regime, with robustness gate + survivorship guard.
 
     冠軍只從通過防呆閘的制度桶中挑選：
       • 桶內 OOS 交易數 >= SUMMARY_MIN_TRADES
       • 桶內涉及 Fold 數 >= SUMMARY_MIN_FOLDS
       • 若 SUMMARY_EXCLUDE_LIGHT，排除 LIGHT_POSITION_PRESETS（⚠️輕倉）
-    通不過的制度顯示「—（無足夠樣本）」，避免薄樣本噪音被捧成冠軍。
+
+    survivorship 守門員（AUDIT-G 🟡-2）：
+      矩陣 / 冠軍用的 avg_ret 來自 oos_trades（已排除期末強制平倉），與 WF OOS 同屬
+      survivorship-prone。沿用引擎現成的延伸追蹤（強制平倉交易延伸到真實出場）算出
+      該制度的真實出場均回報 ext_avg；若 ext_n>0 且 ext_avg < avg_ret − GAP，
+      把冠軍標「⚠️疑survivorship」並在「真實出場%」欄顯示真實數字。
+      （沿用 s2 快出場策略時 ext_n 多為 0，不誤殺；只在慢出場策略進 ACTIVE 時咬人。）
     此閘只影響本摘要表，上方矩陣本體不受影響。
     """
     best = {}
@@ -52,12 +64,13 @@ def _build_summary_table(srm: dict):
                 best[regime] = {"策略": name, **m}
 
     columns = [
-        {"name": "制度",     "id": "制度"},
-        {"name": "最佳策略", "id": "策略"},
-        {"name": "均回報%",  "id": "ret"},
-        {"name": "勝率%",    "id": "wr"},
+        {"name": "制度",      "id": "制度"},
+        {"name": "最佳策略",  "id": "策略"},
+        {"name": "均回報%",   "id": "ret"},
+        {"name": "真實出場%", "id": "ext"},
+        {"name": "勝率%",     "id": "wr"},
         {"name": "OOS交易數", "id": "n"},
-        {"name": "涉及Fold", "id": "folds"},
+        {"name": "涉及Fold",  "id": "folds"},
     ]
 
     rows = []
@@ -67,14 +80,28 @@ def _build_summary_table(srm: dict):
         if b is None:
             rows.append({
                 "制度": disp, "策略": "—（無足夠樣本）",
-                "ret": "—", "wr": "—", "n": "—", "folds": "—",
+                "ret": "—", "ext": "—", "wr": "—", "n": "—", "folds": "—",
             })
             continue
+
+        # ── survivorship 檢查 ────────────────────────────────────────
+        ext_avg = b.get("ext_avg")
+        ext_n   = b.get("ext_n", 0)
+        name    = b["策略"]
+        if ext_n > 0 and ext_avg is not None:
+            ext_sign = "+" if ext_avg > 0 else ""
+            ext_disp = f"{ext_sign}{ext_avg:.2f}%（{ext_n}筆）"
+            if ext_avg < b["avg_ret"] - SUMMARY_SURVIVORSHIP_GAP:
+                name = "⚠️ " + name + "（疑survivorship）"
+        else:
+            ext_disp = "—"
+
         sign = "+" if b["avg_ret"] > 0 else ""
         rows.append({
             "制度":  disp,
-            "策略":  b["策略"],
+            "策略":  name,
             "ret":   f"{sign}{b['avg_ret']:.2f}%",
+            "ext":   ext_disp,
             "wr":    f"{b['win_rate']:.1f}%",
             "n":     b["n"],
             "folds": b["folds"],
@@ -135,13 +162,21 @@ def _fold_regime(hsi_df: pd.DataFrame, oos_start_date) -> str:
 
 
 def _aggregate_by_regime(wf_results: list, hsi_df: pd.DataFrame) -> dict:
-    """Aggregates OOS trades by regime at each trade's buy date (trade-level tagging)."""
-    acc = {r: {"rets": [], "wins": [], "fold_set": set()} for r in REGIMES}
+    """Aggregates OOS trades by regime at each trade's buy date (trade-level tagging).
+
+    AUDIT-G 🟡-2/🟡-3：同時把 oos_extended_trades（強制平倉交易延伸到真實出場）
+    按入場日制度分類、只計「真正出場」（非延伸後仍持倉）的，算出每制度真實出場均回報，
+    供 _build_summary_table 的 survivorship 守門員使用。
+    """
+    acc = {r: {"rets": [], "wins": [], "fold_set": set(), "ext_rets": []}
+           for r in REGIMES}
 
     for fold in wf_results:
         if not fold.get("valid_oos", False):
             continue
         fold_n = fold.get("fold", 0)
+
+        # 策略出場交易（與舊版相同，矩陣本體與冠軍 avg_ret 用這批）
         for trade in fold.get("oos_trades", []):
             buy_date = trade.get("_buy_date")
             if buy_date is None:
@@ -152,15 +187,29 @@ def _aggregate_by_regime(wf_results: list, hsi_df: pd.DataFrame) -> dict:
             acc[regime]["wins"].append(1 if ret > 0 else 0)
             acc[regime]["fold_set"].add(fold_n)
 
+        # 延伸追蹤交易（純診斷：原本被強制平倉、延伸到真實 sell 才出場的單）
+        for et in fold.get("oos_extended_trades", []):
+            if et.get("_still_held_at_end", False):
+                continue   # 延伸 365 日仍未出場 → 真實結果不可知，不計入
+            buy_date = et.get("_buy_date")
+            if buy_date is None:
+                continue
+            regime = _fold_regime(hsi_df, buy_date)
+            acc[regime]["ext_rets"].append(float(et.get("回報%", 0.0)))
+
     out = {}
     for r in REGIMES:
         d = acc[r]
         if d["rets"]:
+            ext_n   = len(d["ext_rets"])
+            ext_avg = round(sum(d["ext_rets"]) / ext_n, 2) if ext_n else None
             out[r] = {
                 "avg_ret":  round(sum(d["rets"]) / len(d["rets"]), 2),
                 "win_rate": round(sum(d["wins"]) / len(d["wins"]) * 100, 1),
                 "n":        len(d["rets"]),
                 "folds":    len(d["fold_set"]),
+                "ext_avg":  ext_avg,
+                "ext_n":    ext_n,
             }
         else:
             out[r] = None
@@ -213,6 +262,9 @@ def _run_strategy(name, preset, stock_data, hsi_df, is_mo, oos_mo, trade_size, s
     if preset.get("cooldown_days")  is not None: kw["cooldown_days"]  = preset["cooldown_days"]
     if preset.get("seasonal_filter"):            kw["seasonal_filter"] = True
     kw["use_pit_universe"] = use_pit
+    # AUDIT-G 🟡-3：明確帶 track_extended=True。延伸追蹤現在被 _build_summary_table 的
+    # survivorship 守門員消費（不再算完即丟）；若日後拿掉守門員，這裡應改 False 省 CPU。
+    kw["track_extended"] = True
     try:
         results = run_portfolio_walk_forward(
             stock_data, preset["buy"], preset["sell"],
@@ -466,6 +518,17 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
             color="success", className="mb-3",
         )
 
+        # AUDIT-G 🟡-2：矩陣與冠軍數字屬 survivorship-prone，明寫 caption（與 WF 頁一致）
+        survivorship_caption = html.Small(
+            "⚠️ 矩陣與冠軍表的均回報% 來自策略出場交易（已排除「期末強制平倉」），"
+            "與 WF OOS 同屬 survivorship-prone。冠軍表的「真實出場%」是把該制度被強制平倉的單"
+            "延伸到真實 sell 才出場的均回報；若顯著低於均回報%（差 > 3%），冠軍會標"
+            "「⚠️疑survivorship」，代表高分可能只來自「跑完全程的贏家」。"
+            "目前 ACTIVE 全用 s2 快出場，強制平倉少、真實出場%多為空（無疑慮）。",
+            className="text-muted d-block mb-3",
+            style={"fontSize": "0.78rem"},
+        )
+
         matrix_table = dash_table.DataTable(
             columns=mat_cols,
             data=mat_rows,
@@ -497,6 +560,10 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
                          "color": "#6fcf6f"},
                         {"if": {"column_id": "ret", "filter_query": '{ret} contains "-"'},
                          "color": "#cf6f6f"},
+                        {"if": {"column_id": "ext", "filter_query": '{ext} contains "-"'},
+                         "color": "#cf6f6f"},
+                        {"if": {"column_id": "策略", "filter_query": '{策略} contains "survivorship"'},
+                         "color": "#f9a825", "fontWeight": "bold"},
                     ],
                     style_as_list_view=False,
                     page_action="none",
@@ -504,7 +571,7 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
             ]
 
         return [header, html.H6("📊 策略 × 制度 矩陣", className="mb-2"),
-                matrix_table, *summary_section]
+                survivorship_caption, matrix_table, *summary_section]
 
     # ── Custom strategy mode ──────────────────────────────────────
     preset = STRATEGY_PRESETS.get(strategy)
@@ -529,11 +596,26 @@ def cb_run(n_clicks, mode, period, is_mo, oos_mo, trade_size, slippage_ui, min_o
         else:
             sign = "+" if m["avg_ret"] > 0 else ""
             color = "#6fcf6f" if m["avg_ret"] >= 0 else "#cf6f6f"
-            body = html.Div([
+            # survivorship 提示（與冠軍表同口徑）：強制平倉延伸真實出場明顯較差時標記
+            ext_note = None
+            if m.get("ext_n", 0) > 0 and m.get("ext_avg") is not None:
+                ea = m["ext_avg"]
+                ea_sign = "+" if ea > 0 else ""
+                warn = ea < m["avg_ret"] - SUMMARY_SURVIVORSHIP_GAP
+                ext_note = html.Small(
+                    f"真實出場 {ea_sign}{ea:.2f}%（{m['ext_n']}筆）"
+                    + ("　⚠️疑survivorship" if warn else ""),
+                    className="d-block",
+                    style={"color": "#f9a825" if warn else "#888", "fontSize": "0.72rem"},
+                )
+            body_children = [
                 html.Div(f"{sign}{m['avg_ret']:.2f}%",
                          style={"fontSize": "1.4rem", "fontWeight": "bold", "color": color}),
                 html.Small(f"{m['n']} 筆交易 · 勝率 {m['win_rate']:.1f}% · {m['folds']} 個Fold"),
-            ])
+            ]
+            if ext_note is not None:
+                body_children.append(ext_note)
+            body = html.Div(body_children)
         return dbc.Col(dbc.Card(dbc.CardBody([
             html.Div(REGIME_DISPLAY.get(regime, regime), className="small text-muted mb-1"),
             body,

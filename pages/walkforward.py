@@ -541,6 +541,170 @@ def _fold_table(rows: list) -> dash_table.DataTable:
     )
 
 
+# ══════════════════════════════════════════════════════════════════
+# 🔬 逐 Fold 交易明細（AUDIT-G 🟡-4：從 Streamlit 版移植回 Dash）
+# 每個 Fold 一個 Accordion 項，內含三張表：
+#   1. 策略出場交易（oos_trades）
+#   2. 期末強制平倉明細（oos_forced_trades，未計入指標）
+#   3. 延伸追蹤明細（oos_extended_trades，含「真實出場 / 仍持倉」狀態）
+# 資料 dict 全都有，純前端補畫——補回「是哪個 Fold、哪幾筆被強制平倉/延伸」的鑑識資訊。
+# ══════════════════════════════════════════════════════════════════
+_FOLD_DETAIL_BASE_COLS = [
+    "買入日期", "賣出日期", "買入價", "賣出價",
+    "回報%", "盈虧(HKD)", "持倉天數", "賣出原因",
+]
+
+
+def _trades_datatable(trades: list, is_portfolio: bool, extra_status: bool = False):
+    """把一個 trade list 攤成 DataTable；extra_status=True 時補「狀態」欄（延伸追蹤用）。"""
+    if not trades:
+        return None
+
+    base_cols = (["ticker"] if is_portfolio else []) + _FOLD_DETAIL_BASE_COLS
+    # 只保留至少有一筆出現過的欄位
+    avail = [c for c in base_cols if any(c in t for t in trades)]
+
+    rows = []
+    for t in trades:
+        row = {c: t.get(c) for c in avail}
+        if extra_status:
+            row["狀態"] = "⏳ 延伸後仍持倉" if t.get("_still_held_at_end") else "✅ 真實出場"
+        rows.append(row)
+
+    columns = [{"name": ("代碼" if c == "ticker" else c), "id": c} for c in avail]
+    if extra_status:
+        columns.append({"name": "狀態", "id": "狀態"})
+
+    cond = [
+        {"if": {"row_index": "odd"}, "backgroundColor": "#1f1f1f"},
+        {"if": {"filter_query": "{回報%} > 0", "column_id": "回報%"},
+         "color": "#26a69a", "fontWeight": "bold"},
+        {"if": {"filter_query": "{回報%} < 0", "column_id": "回報%"},
+         "color": "#ef5350", "fontWeight": "bold"},
+        {"if": {"filter_query": "{盈虧(HKD)} > 0", "column_id": "盈虧(HKD)"},
+         "color": "#26a69a"},
+        {"if": {"filter_query": "{盈虧(HKD)} < 0", "column_id": "盈虧(HKD)"},
+         "color": "#ef5350"},
+    ]
+    return dash_table.DataTable(
+        columns=columns,
+        data=rows,
+        sort_action="native",
+        page_size=20,
+        style_header=_HDR,
+        style_data=_DAT,
+        style_data_conditional=cond,
+        style_cell=_CELL,
+        style_table={"overflowX": "auto"},
+    )
+
+
+def _per_fold_detail_section(wf_results: list, is_portfolio: bool):
+    items = []
+    for r in wf_results:
+        fold_n = r.get("fold", 0)
+
+        # 熊市跳過的 Fold：給一行說明，無交易表
+        if r.get("skipped_bear"):
+            title = (
+                f"⏭️ Fold {fold_n}｜"
+                f"{r['oos_start'].strftime('%Y-%m-%d')} → {r['oos_end'].strftime('%Y-%m-%d')}"
+                f"｜{r.get('filter_reason', '⛔ 熊市')} 跳過"
+            )
+            items.append(dbc.AccordionItem(
+                [dbc.Alert(
+                    f"{r.get('filter_reason', '⛔ 熊市')}：本 Fold 因制度過濾跳過，無交易。",
+                    color="secondary", className="py-2 mb-0",
+                )],
+                title=title,
+            ))
+            continue
+
+        im       = r.get("is_metrics")  or {}
+        om       = r.get("oos_metrics") or {}
+        valid    = r.get("valid_oos")
+        forced_n = r.get("forced_exit_count", 0)
+        ext_n    = r.get("extended_count", 0)
+        oos_n    = r.get("oos_trade_count", 0)
+
+        title = (
+            f"{'✅' if valid else '⚠️'} Fold {fold_n}"
+            f"｜OOS {r['oos_start'].strftime('%Y-%m-%d')} → {r['oos_end'].strftime('%Y-%m-%d')}"
+            f"｜IS {im.get('平均每筆回報%', 0):+.2f}% → OOS {om.get('平均每筆回報%', 0):+.2f}%"
+            + (f"｜策略出場 {oos_n} 筆" if valid else f"｜⚠️ 僅 {oos_n} 筆OOS")
+            + (f"｜強制 {forced_n} 延伸 {ext_n}" if forced_n > 0 else "")
+        )
+
+        body = []
+        if not valid:
+            body.append(dbc.Alert(
+                f"⚠️ 此 Fold OOS 僅 {oos_n} 筆策略出場，排除在評分之外。",
+                color="warning", className="py-2 mb-2",
+            ))
+        if forced_n > 0:
+            body.append(html.Small(
+                f"ℹ️ 本 Fold 有 {forced_n} 筆期末強制平倉（不計入指標）"
+                + (f"，其中 {ext_n} 筆已延伸追蹤到真實結果" if ext_n else "")
+                + "。",
+                className="text-muted d-block mb-2", style={"fontSize": "0.78rem"},
+            ))
+        if is_portfolio and r.get("n_stocks"):
+            body.append(html.Small(
+                f"本 Fold 實際跑 {r['n_stocks']} 隻股票",
+                className="text-muted d-block mb-2", style={"fontSize": "0.78rem"},
+            ))
+
+        # 1. 策略出場
+        body.append(html.Small("📗 策略出場交易",
+                               className="fw-bold d-block mt-1 mb-1"))
+        t_strat = _trades_datatable(r.get("oos_trades", []), is_portfolio)
+        body.append(t_strat if t_strat is not None else html.Small(
+            "本 Fold 無策略出場交易", className="text-muted d-block mb-2"))
+
+        # 2. 期末強制平倉明細
+        forced_list = r.get("oos_forced_trades", [])
+        if forced_list:
+            body.append(html.Small(
+                f"📋 期末強制平倉明細（{len(forced_list)} 筆，因 Fold 邊界截斷，未計入指標）",
+                className="fw-bold d-block mt-3 mb-1", style={"color": "#f9a825"},
+            ))
+            body.append(_trades_datatable(forced_list, is_portfolio))
+
+        # 3. 延伸追蹤明細
+        ext_list = r.get("oos_extended_trades", [])
+        if ext_list:
+            es      = _extended_summary(ext_list)
+            closed  = es.get("closed", 0)
+            still   = es.get("still_held", 0)
+            avg_r   = es.get("avg_return", 0.0)
+            body.append(html.Small(
+                f"🔍 延伸追蹤明細（{len(ext_list)} 筆；真實出場 {closed} 筆"
+                f"，均 {'+' if avg_r >= 0 else ''}{avg_r:.2f}%；仍持倉 {still} 筆）",
+                className="fw-bold d-block mt-3 mb-1", style={"color": "#42a5f5"},
+            ))
+            body.append(html.Small(
+                "原本在 Fold 邊界被強制平倉的交易，用全期數據繼續持有到真實 sell 信號"
+                "（或 365 日上限）。純診斷用途，不計入上方 WF 指標。",
+                className="text-muted d-block mb-1", style={"fontSize": "0.76rem"},
+            ))
+            body.append(_trades_datatable(ext_list, is_portfolio, extra_status=True))
+
+        items.append(dbc.AccordionItem(body, title=title))
+
+    if not items:
+        return html.Div()
+
+    return html.Div([
+        html.H6("🔬 逐 Fold 交易記錄（鑑識用：策略出場 / 強制平倉 / 延伸追蹤明細）",
+                className="mb-2"),
+        html.Small(
+            "展開任一 Fold 可看該 Fold 的逐筆交易；強制平倉 / 延伸追蹤表只在該 Fold 有對應資料時出現。",
+            className="text-muted d-block mb-2", style={"fontSize": "0.78rem"},
+        ),
+        dbc.Accordion(items, start_collapsed=True, always_open=False, flush=False),
+    ], className="mb-3")
+
+
 _WF_STOCK_COLS = [
     {"name": "代碼",         "id": "代碼"},
     {"name": "OOS平均每筆%",  "id": "平均每筆%"},
@@ -1167,6 +1331,8 @@ def cb_render_results(done_data):
             html.H6(f"📑 逐 Fold 詳細數據（共 {n_folds} 個 Fold）", className="mb-1"),
             _fold_table(rows),
         ], className="mb-3")
+        # ★ AUDIT-G 🟡-4：逐 Fold 交易明細（策略出場 / 強制平倉 / 延伸追蹤三表）
+        per_fold_detail = _per_fold_detail_section(wf_results, is_portfolio)
         stock_section = _per_stock_section(wf_results, ts) if is_portfolio else html.Div()
 
         status_str = (f"✅ {mode_lbl} | {strategy} | "
@@ -1177,7 +1343,7 @@ def cb_render_results(done_data):
         ])
         result_children = [*verdict, bar_section, deg_section,
                            oos_section, extended_section,
-                           stock_section, fold_section]
+                           stock_section, fold_section, per_fold_detail]
         print(f"[WF] cb_render_results OK  folds={n_folds} children={len(result_children)}", flush=True)
         return result_children, status_str, done_bar
 
