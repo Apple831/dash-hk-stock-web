@@ -8,16 +8,10 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
 
-  - type: cron
-    name: daily-scan
-    runtime: python
-    schedule: "30 8 * * 1-5"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python scripts/daily_scan.py
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: TELEGRAM_CHAT_ID
-        sync: false
+# ── 已移除 cron: daily-scan（2026-06-04）──────────────────────────────
+# 每日掃描的唯一觸發源是 GitHub Actions（.github/workflows/daily_scan.yml）。
+# 原本這裡的 Render cron 與 Actions 同排程（"30 8 * * 1-5"），free plan 下休眠所以沒事；
+# 但升級 Render 方案後可能自動啟動，導致：
+#   (a) 與 Actions 同分鐘雙重掃描 → Telegram 重複推播；
+#   (b) 該 cron 無 GH_TOKEN / GH_REPO → 帳本靜默停寫。
+# 既然只走 GitHub Actions，直接移除此區塊，升級方案後也不會誤啟動第二個推播源。
