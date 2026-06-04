@@ -32,7 +32,7 @@ import paper_ledger as pl  # noqa: E402
 dash.register_page(__name__, path="/ledger", name="實盤帳本")
 
 # ── raw.githubusercontent 讀檔位置（web 服務無 GH_TOKEN，走公開 raw）──────────────
-_GH_REPO   = os.environ.get("GH_REPO", "Apple831/my-hk-stock-web")
+_GH_REPO   = os.environ.get("GH_REPO", "Apple831/dash-hk-stock-web")
 _GH_BRANCH = os.environ.get("GH_BRANCH", "main")
 _RAW_URL   = (
     f"https://raw.githubusercontent.com/{_GH_REPO}/{_GH_BRANCH}/{pl.LEDGER_PATH}"

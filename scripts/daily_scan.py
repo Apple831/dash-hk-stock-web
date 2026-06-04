@@ -1,7 +1,7 @@
 """
 每日自動掃描 + Telegram 通知
 
-港股收盤後（HKT 16:30 / UTC 08:30）由 Render cron job / GitHub Actions 觸發。
+港股收盤後（HKT 16:30 / UTC 08:30）由 GitHub Actions 觸發。
 掃描 stocks.txt 全部股票，對「實盤策略」做 AND 邏輯買入訊號判斷。
 有命中 → 發 Telegram；無命中 → 發心跳。
 失敗 → 印 log 並 exit(1)。
