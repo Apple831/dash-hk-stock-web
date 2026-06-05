@@ -51,7 +51,7 @@ def _signal_item(name: str, detail: str, triggered: bool, kind: str):
     ], className="mb-2")
 
 
-def _verdict_card(buy_n: int, sell_n: int, buy_total: int = 16) -> dbc.Alert:
+def _verdict_card(buy_n: int, sell_n: int, buy_total: int = 18) -> dbc.Alert:
     if buy_n >= 3 and buy_n > sell_n:
         text, color = "偏多",   "success"
     elif buy_n >= 1 and buy_n > sell_n:
