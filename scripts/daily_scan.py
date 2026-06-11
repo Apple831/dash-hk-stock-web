@@ -25,14 +25,18 @@ from regime import detect_regime
 from config import (
     ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD,
     REGIME_RECOMMENDATIONS, TV_URL, TV_HEADERS, LIGHT_POSITION_PRESETS,
+    LIVE_PRESET_KEYS,
 )
 
 # 實盤帳本（附加功能：失敗只印 log，不影響掃描 + Telegram 主流程）
 import paper_ledger as pl
 
 
-# ── 實盤策略白名單：只有 💎 已通過 PIT WF 的策略可推播 ──────────────
-LIVE_PRESETS = {name: p for name, p in ACTIVE_PRESETS.items() if name.startswith("💎")}
+# ── 實盤策略白名單：只推播 key 在 LIVE_PRESET_KEYS 內的策略 ──────────
+# V22.2 Phase 4（路線 A）：改用 config 的 LIVE_PRESET_KEYS（取代舊「💎 前綴」判定）。
+# 目前白名單為空 → 不推播任何實盤訊號（誠實口徑下全 ACTIVE 打平/負）。
+# 要復活某策略：在 config.LIVE_PRESET_KEYS 加入其完整 key 即可（可逆）。
+LIVE_PRESETS = {name: p for name, p in ACTIVE_PRESETS.items() if name in LIVE_PRESET_KEYS}
 
 
 # ── 股票名稱：用 TradingView screener 一次抓全部（多為中文名）──────
@@ -185,7 +189,7 @@ def _make_market_fns() -> tuple:
     建立 price_fn / sig_fn 供 paper_ledger 用，兩者共用記憶化 snapshot，
     避免同一 ticker 在 pending_buy / open / pending_sell 處理時重複抓取。
     用 6mo 數據（確保 BB warmup 充足，與 scan_all 一致；get_stock_data 已有 diskcache）。
-      price_fn(ticker) -> {"date": date, "open": float} 或 None
+      price_fn(ticker) -> {"date": date, "open": float, "close": float, "low": float} 或 None
       sig_fn(ticker)   -> {"date": date, "s2": bool, "dates": [date,...]} 或 None
     """
     cache: dict = {}
@@ -203,6 +207,8 @@ def _make_market_fns() -> tuple:
                 snap = {
                     "date":  df.index[-1].date(),
                     "open":  float(last["Open"]),
+                    "close": float(last["Close"]),
+                    "low":   float(last["Low"]),   # 供帳本止損偵測（low ≤ entry×(1-stop/100)）
                     "s2":    bool(sigs["s2"].iloc[-1]),
                     "dates": [d.date() for d in df.index],
                 }
@@ -213,7 +219,8 @@ def _make_market_fns() -> tuple:
 
     def price_fn(ticker: str):
         s = _snapshot(ticker)
-        return {"date": s["date"], "open": s["open"]} if s else None
+        return {"date": s["date"], "open": s["open"],
+                "close": s["close"], "low": s["low"]} if s else None
 
     def sig_fn(ticker: str):
         s = _snapshot(ticker)
@@ -234,10 +241,19 @@ def _run_ledger(hits: list, date_str: str) -> str:
         return ""
     try:
         price_fn, sig_fn = _make_market_fns()
+        # 從 preset 帶入風險出場參數（stop_loss_pct / max_hold_days）；
+        # preset 沒設 → None → 帳本不啟用該出場（行為與現況一致）。
+        strategy_params = {
+            name: {
+                "stop_loss_pct": p.get("stop_loss_pct"),
+                "max_hold_days": p.get("max_hold_days"),
+            }
+            for name, p in LIVE_PRESETS.items()
+        }
         trades, sha = pl.load_ledger()
-        pl.process_pending_buys(trades, price_fn)         # 1. 昨日訊號 → 今日開盤成交
-        pl.process_open_positions(trades, sig_fn, price_fn)  # 2. s2 出場（T+1）
-        pl.record_new_signals(trades, hits, date_str)     # 3. 今日新訊號 → pending_buy
+        pl.process_pending_buys(trades, price_fn)            # 1. 昨日訊號 → 今日開盤成交
+        pl.process_open_positions(trades, sig_fn, price_fn)  # 2. 出場（止損→超時→s2，T+1）
+        pl.record_new_signals(trades, hits, date_str, strategy_params)  # 3. 今日新訊號
         pl.save_ledger(trades, sha, f"chore(ledger): update {date_str}")
         summary = pl.summarize(trades)
         return pl.format_ledger_summary(summary)

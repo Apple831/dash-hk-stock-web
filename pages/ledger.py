@@ -236,8 +236,10 @@ layout = html.Div([
     ),
 
     html.Small(
-        "ℹ️ 帳本口徑與 WF OOS 對齊：單邊成本 0.0023、T+1 進出、s2 布林上軌出場、MIN5、"
-        "固定倉位非複利。數字可直接與 Walk-Forward 的 OOS 對照。",
+        "ℹ️ 帳本口徑：單邊成本 0.0023、T+1 進出、MIN5、固定倉位非複利；"
+        "出場依各策略 preset（s2 布林上軌 / 止損 / 超時）。"
+        "⚠️ V22.2 Phase 4：頂部 WF OOS 已證含生存者偏差，請與「真實出場%（延伸追蹤）」"
+        "對照，切勿與頂部 OOS 對照。",
         className="text-muted d-block mb-3",
         style={"fontSize": "0.78rem"},
     ),
@@ -298,7 +300,8 @@ def cb_load_ledger(_n_clicks, _n_init):
             dbc.Col([
                 html.H6("📊 各策略表現（by_strategy）", className="mb-2"),
                 html.Small(
-                    "每支 💎 策略的實盤已平倉表現，可與該策略 WF OOS 對照。",
+                    "每支策略的實盤已平倉表現，請與該策略「真實出場%（延伸追蹤）」對照"
+                    "（頂部 WF OOS 含生存者偏差，勿用）。",
                     className="text-muted d-block mb-2",
                     style={"fontSize": "0.78rem"},
                 ),

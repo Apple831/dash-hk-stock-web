@@ -44,7 +44,7 @@ def _to_date(s) -> date:
 
 
 def _new_trade(tid: str, ticker: str, strategy: str, resonance_n: int,
-               signal_date: str) -> dict:
+               signal_date: str, stop_loss_pct=None, max_hold_days=None) -> dict:
     """建立一筆 pending_buy 帳本紀錄（其餘欄位待成交 / 平倉時填）。"""
     return {
         "id": tid,                       # ticker|strategy|signal_date
@@ -55,13 +55,17 @@ def _new_trade(tid: str, ticker: str, strategy: str, resonance_n: int,
         "signal_date": signal_date,      # 買訊偵測日（收盤後 cron）
         "entry_date": None,
         "entry_px": None,
-        "sell_signal_date": None,        # s2 觸發日
+        "sell_signal_date": None,        # 出場訊號觸發日（s2 / 止損 / 超時）
         "exit_date": None,
         "exit_px": None,
         "return_pct": None,
         "hold_bars": None,               # 平倉時填（days_held + 1）
         "exit_reason": None,
         "min_hold_days": MIN_HOLD_DAYS,
+        # 風險出場（V22.2 Phase 4 補：對齊 backtest 的 stop_loss_pct / max_hold_days）
+        # None = 不啟用（現有策略全部 None，行為不變）；由 daily_scan 從 preset 帶入。
+        "stop_loss_pct": stop_loss_pct,  # 跌破 entry_px×(1-pct/100) 砍倉（百分數，如 10）
+        "max_hold_days": max_hold_days,  # 抱滿 N 個 bar 砍倉
         "trade_size": TRADE_SIZE,
     }
 
@@ -175,15 +179,22 @@ def process_pending_buys(trades: list, price_fn) -> list:
 
 def process_open_positions(trades: list, sig_fn, price_fn) -> list:
     """
-    第一步：open → pending_sell。
+    第一步：open → pending_sell（偵測出場訊號）。
       bars_held = 進場後到今日（含）實際有 bar 的交易日數（= backtest 的 days_held）。
-      滿 min_hold_days 且今日 s2 觸發（Close > BB_upper）→ 標記 pending_sell（T+1 才平）。
-      hold_bars = bars_held + 1（對齊 backtest 的 actual_days_held：策略 sell 多算一天 T+1）。
+      出場優先序（對齊 backtest）：止損 → 超時 → 策略 s2。
+        • 止損 / 超時：風險出場，不受 min_hold 凍結（凍結期內照觸發）。
+        • 策略 s2（Close > BB_upper）：滿 min_hold_days 才允許。
+      命中即標記 pending_sell（T+1 才平），並把出場理由存進 pending_exit_reason。
+      hold_bars = bars_held + 1（對齊 backtest 的 actual_days_held：T+1 多算一天）。
+
+      ⚠️ 止損偵測用「當日最低價」（對齊 backtest 的 low ≤ ep×(1-stop/100)），
+         但實際平倉仍在 T+1 開盤（非盤中止損價），故實現虧損會與回測略有出入；
+         此為日線帳本架構限制下最接近的實作。時間出場（超時）無此問題、與回測一致。
     第二步：pending_sell → closed。
       最新 bar 日期嚴格晚於 sell_signal_date（次日開盤、非假期）才平倉，
       exit_px = open * (1 - ONE_SIDE_COST)，return_pct 含雙邊成本。
     """
-    # ── 第一步：偵測 s2 出場訊號 ──
+    # ── 第一步：偵測出場訊號（止損 → 超時 → s2）──
     for t in trades:
         if t["status"] != "open":
             continue
@@ -192,12 +203,36 @@ def process_open_positions(trades: list, sig_fn, price_fn) -> list:
             continue
         entry_d = _to_date(t["entry_date"])
         today = s["date"]
+        if today <= entry_d:                       # 進場當天不出場（T+1 起算）
+            continue
         bars_held = sum(1 for d in s["dates"] if entry_d < d <= today)
         min_hold = t.get("min_hold_days", MIN_HOLD_DAYS)
-        if bars_held >= min_hold and s["s2"] and today > entry_d:
+
+        exit_reason = None
+
+        # (1) 止損：跌破 entry_px×(1-stop/100)。不受 min_hold 凍結。
+        stop = t.get("stop_loss_pct")
+        if stop:
+            p = price_fn(t["ticker"])
+            entry_px = t.get("entry_px")
+            low = p.get("low") if p else None       # 缺 low（舊 closure）→ 不觸發，安全
+            if entry_px and low is not None and low <= entry_px * (1 - stop / 100.0):
+                exit_reason = "止損"
+
+        # (2) 超時：抱滿 max_hold_days 個 bar。不受 min_hold 凍結。
+        max_hold = t.get("max_hold_days")
+        if exit_reason is None and max_hold and bars_held >= max_hold:
+            exit_reason = "超時"
+
+        # (3) 策略 s2（布林上軌）：受 min_hold 凍結。
+        if exit_reason is None and bars_held >= min_hold and s["s2"]:
+            exit_reason = "策略訊號(s2)"
+
+        if exit_reason is not None:
             t["status"] = "pending_sell"
             t["sell_signal_date"] = today.isoformat()
             t["hold_bars"] = bars_held + 1
+            t["pending_exit_reason"] = exit_reason
 
     # ── 第二步：T+1 開盤平倉 ──
     for t in trades:
@@ -212,19 +247,24 @@ def process_open_positions(trades: list, sig_fn, price_fn) -> list:
             t["exit_px"] = exit_px
             t["exit_date"] = info["date"].isoformat()
             t["return_pct"] = round((exit_px - entry_px) / entry_px * 100, 4)
-            t["exit_reason"] = "策略訊號(s2)"
+            t["exit_reason"] = t.get("pending_exit_reason", "策略訊號(s2)")
             t["status"] = "closed"
     return trades
 
 
-def record_new_signals(trades: list, hits: list, signal_date: str) -> list:
+def record_new_signals(trades: list, hits: list, signal_date: str,
+                       strategy_params: dict = None) -> list:
     """
     把今日 scan_all 的命中（每筆含 presets list + n）登記為 pending_buy。
     去重規則：
       1. id（ticker|strategy|signal_date）已存在（任何狀態）→ 跳過（同訊號冪等，防同日重跑）。
       2. (ticker, strategy) 已有 open / pending_buy → 跳過（同策略同股不 pyramiding）。
     不同策略可同股並存。resonance_n = hit["n"]。
+
+    strategy_params（可選）：{strategy_name: {"stop_loss_pct":..., "max_hold_days":...}}
+      由 daily_scan 從 preset 帶入；缺省 / 缺 key → None（不啟用風險出場，行為不變）。
     """
+    strategy_params = strategy_params or {}
     open_keys = get_open_keys(trades)
     existing_ids = {t["id"] for t in trades}
     for h in hits:
@@ -236,7 +276,12 @@ def record_new_signals(trades: list, hits: list, signal_date: str) -> list:
                 continue
             if (ticker, strategy) in open_keys:
                 continue
-            trades.append(_new_trade(tid, ticker, strategy, n, signal_date))
+            sp = strategy_params.get(strategy, {})
+            trades.append(_new_trade(
+                tid, ticker, strategy, n, signal_date,
+                stop_loss_pct=sp.get("stop_loss_pct"),
+                max_hold_days=sp.get("max_hold_days"),
+            ))
             existing_ids.add(tid)
             open_keys.add((ticker, strategy))
     return trades
