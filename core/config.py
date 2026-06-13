@@ -2,6 +2,36 @@
 # config.py -- 策略組合預設 & 全局常量
 # ══════════════════════════════════════════════════════════════════
 #
+# V22.3 b19 深度ROC紙上復活 + 熊市豁免（2026-06-12）-- 來自 Phase 5 b17 救援三輪審計：
+#
+#   Phase 5 軌跡（混合真實回報為唯一裁決，HANDOVER28 §3）：
+#     • Phase 5a 出場格點 7 格全敗，證三鐵則：b17 右尾驅動（止盈必死）、左尾也回歸
+#       （任何價格型截尾出場有害）、時間窗 T10→T20 收斂（出場面天花板 ≈ +1.0%）。
+#     • Phase 5b 制度×ROC 9 格：ROC 深度 -8→-10→-12 = 混合 +0.97→+2.49→+3.29 單調
+#       高原；-10×全制度 為唯一同時過「混合≥+2.0% / 正Fold≥60% / 樣本≥500」三門的格
+#       （混合 +2.49% / 正Fold 7/11 / n=1811）。
+#     • Phase 5c 勝出格確認：剔除 2022 後其餘年份加權仍 ≈ +1.8%（非單一事件依賴）；
+#       逐制度 alpha 核心在恐慌環境（強熊市 +8.54% 最肥、震盪市 -2.80% 最毒），與
+#       indicators.py GATE 移除註解的既有發現（均值回歸在高波動環境更有效）獨立復現。
+#
+#   ⚠️ 口徑分裂（關鍵）：勝出格 +2.49% 含「強/弱熊市」時段，而 daily_scan 熊市閘門
+#     （BEAR_LABELS_HARD）預設封鎖此時段 → 不開例外則線上真實預期僅 +1.48%（交易層）
+#     / +0.93%（進場閘層），不過門。故本次處置為「紙上復活 + 熊市豁免」：
+#       • 新增 b19（roc5<-10 深度版，indicators.py，獨立計算、不動 b17）。
+#       • 新增 ACTIVE preset「💎 b19 深度ROC超跌反彈」，帶 max_hold_days=20（時間出場，
+#         與回測完全對齊、無止損 T+1 偏差；出場仍含 s2 右尾保留器）。
+#       • LIVE_PRESET_KEYS 加入 b19（路線 A 後首支復活；推播 + 紙上帳本向前驗證）。
+#       • 新增 BEAR_EXEMPT_PRESETS：daily_scan 對此集合內策略豁免熊市閘門（per-strategy，
+#         單常數模式，仿 LIGHT_POSITION_PRESETS）。b19 是唯一成員。
+#       • b19 同列 LIGHT_POSITION_PRESETS（事件集中：強熊市 266 筆≈2-3 episode，
+#         有效獨立事件數個位數 → 實盤輕倉，待帳本累積 30+ 已平倉再評真錢定倉）。
+#       • REGIME_RECOMMENDATIONS：熊市觀察/弱熊市/強熊市補入 b19（其恐慌環境主場）。
+#   ⚠️ 帳本須 reset 並與本次 config 同步（避免新舊口徑混帳；b19 為新策略，舊帳本無其紀錄，
+#      但 LIVE 白名單由空轉非空，reset 後 b19 從乾淨狀態開始向前記錄）。
+#   ⚠️ b17 buy/sell tuple、b15+b17 等既有組合一字未動（b19 為獨立新訊號，互不牽連）。
+#   ⚠️ buy tuple 由 18 元素統一補位為 19（b1–b19）；sell 仍 8 元素。
+#
+# ──────────────────────────────────────────────────────────────────
 # V22.2 Phase 4 全面降級（2026-06-11）-- survivorship 誠實口徑審計（Phase 1-4）：
 #
 #   背景：全 11 支 ACTIVE 的頂部 OOS（+6~10%）經查全部含生存者偏差（s2 布林上軌
@@ -12,12 +42,13 @@
 #     • 改用止損(stop10) / 時間(time20) 風險出場可修掉 survivorship，但「修好」後
 #       真實回報全部落在打平帶（0 ~ +1%），無一支站上 +2% 實盤門檻。
 #     • b17 看似 +2.64%（止損）為 cohort 選擇偏誤；混合真實回報僅 +0.38%(止損)/
-#       +0.97%(時間)，平均 +0.68% → 同樣打平。
+#       +0.97%(時間)，平均 +0.68% → 同樣打平。（V22.3 補：深度過濾後 b19 才站上門檻。）
 #     • b12+b6：止損都清不乾淨（真實 -2.41% / 勝率 25.7% / 差距 -5pp）→ 確認無 alpha。
 #
 #   處置（路線 A：全部降，無實盤）：
 #     • 新增 LIVE_PRESET_KEYS = set()（空實盤白名單）；daily_scan 改讀此白名單，
 #       不再用 💎 前綴判定 → 實盤推播清空。可逆：未來通過驗證把 key 加回 set 即復活。
+#       （V22.3：b19 通過驗證，已加回。）
 #     • b12+b6 由 ACTIVE 降入 LEGACY（確認死亡，非僅降級）。
 #     • 其餘 10 支 key/💎 維持不變（避免 ~40 處引用的高風險遷移）；💎 原意「PIT 驗證
 #       通過」技術上仍真（headline 確過），誠實口徑打平一事由本註解 + 帳本 benchmark 說明。
@@ -111,18 +142,19 @@
 #   🔴-2 cooldown_days 解耦；🟡-2 T+1 持倉天數；🟡-7 港股 lot size 取整
 #
 # 欄位說明：
-#   desc / buy(18) / sell(8) / min_hold_days / cooldown_days / seasonal_filter
+#   desc / buy(19) / sell(8) / min_hold_days / cooldown_days / seasonal_filter
+#   （可選風險出場）stop_loss_pct / max_hold_days / take_profit_pct
 #
-# buy  tuple 順序：b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 b16 b17 b18
+# buy  tuple 順序：b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 b16 b17 b18 b19
 # sell tuple 順序：s1  s2  s3  s4  s5  s6  s7  s8
 #
 # ══════════════════════════════════════════════════════════════════
-# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 10 支；b12+b6 已於 V22.2 Phase 4 降入 LEGACY）
+# ACTIVE_PRESETS -- 實盤候選 / 推薦策略（共 11 支；V22.3 新增 b19 深度ROC）
 # 用於：制度矩陣全跑、共振掃描、Tab 推薦清單、daily_scan 推播
-# ⚠️ V22.2 Phase 4：實盤白名單 LIVE_PRESET_KEYS 已清空，本清單僅供分析/回測，不再實盤推播。
+# ⚠️ V22.3：實盤白名單 LIVE_PRESET_KEYS 含 b19（紙上向前驗證中）；其餘 10 支僅供分析/回測。
 #
 #   分組：
-#   ① 純單訊號形態主力（6）：b13 b14 b15 b16 b17 b18
+#   ① 純單訊號形態主力（7）：b13 b14 b15 b16 b17 b18 b19
 #   ② 形態+形態雙確認（3，V22.1）：b12+b15 主力 / b13+b15 b15+b17 輔助輕倉
 #   ③ 含 b6 輔助（1）：b15+b6   （b12+b6 已降 LEGACY）
 # ══════════════════════════════════════════════════════════════════
@@ -138,7 +170,7 @@ ACTIVE_PRESETS = {
                 "前2天量萎縮後今天放量陽線，RSI<40，MA20下方。s2 布林上軌出場，MIN5。"
                 "PIT WF：IS +6.62% / OOS +7.49% / 退化 -96% / 正Fold 7/7。"
                 "V21 重跑（2026-05-28）：OOS +6.32%，每 Fold 26-265 筆，2022 熊市 OOS +7.69%。",
-        "buy":  (False, False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -150,7 +182,7 @@ ACTIVE_PRESETS = {
                 "V21 重跑（2026-05-28）：OOS +5.12%，每 Fold 47-162 筆，OOS 均高於 IS、最穩定。"
                 "⚠️ MC 連四輪證據最弱（Sharpe 0.176 全場最低、回撤 -37%/-88.7%、回報墊底）→ "
                 "V22.2 加輕倉旗標、牛市推薦退末位；有 alpha 但高波動，實盤勿重倉。",
-        "buy":  (False, False, False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -161,7 +193,7 @@ ACTIVE_PRESETS = {
                 "PIT WF：IS +3.91% / OOS +5.82% / 退化 -106.4% / 正Fold 7/7。"
                 "V21 重跑（2026-05-28）：OOS +5.56%，每 Fold 168-541 筆（樣本最厚），"
                 "純價格形態無指標閾值，是 V22.1 形態+形態組合的最佳基底。",
-        "buy":  (False, False, False, False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -172,7 +204,7 @@ ACTIVE_PRESETS = {
                 "PIT WF：IS +6.43% / OOS +7.30% / 退化 -101.7% / 正Fold 7/7。"
                 "V21 重跑（2026-05-28）：OOS +7.18%，每 Fold 22-92 筆，2022 熊市 OOS +8.33%。",
         "buy":  (False, False, False, False, False, False, False, False, False, False,
-                 False, False, False, False, False, True,  False, False),
+                 False, False, False, False, False, True,  False, False, False),
         "sell": (False, True, False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -182,9 +214,11 @@ ACTIVE_PRESETS = {
                 "收盤 < MA20，RSI<45，陽燭。與 b6 互補，捕捉急跌但 RSI 未到 30 的反彈。"
                 "s2 布林上軌出場，MIN5。"
                 "PIT WF：IS +5.96% / OOS +8.73% / 退化 -141.8% / 正Fold 7/7。"
-                "V21 重跑（2026-05-28）：OOS +8.12%（11 Fold），每 Fold 39-419 筆，全程無負 Fold。",
+                "V21 重跑（2026-05-28）：OOS +8.12%（11 Fold），每 Fold 39-419 筆，全程無負 Fold。"
+                "⚠️ V22.2 誠實口徑：混合真實回報僅 +0.68%（頂部 OOS 含生存者偏差）。"
+                "V22.3：深度版見 b19（roc5<-10 + 熊市豁免才站上 +2% 門檻）。",
         "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, False, False, False, False, True, False),
+                 False, False, False, False, False, False, False, False, True, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -196,9 +230,26 @@ ACTIVE_PRESETS = {
                 "PIT WF：IS +5.85% / OOS +7.09% / 退化 -118.9% / 正Fold 6/6。"
                 "V21 重跑（2026-05-28）：OOS +6.26%，每 Fold 59-196 筆。",
         "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, False, False, False, False, False, True),
+                 False, False, False, False, False, False, False, False, False, True, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
+    },
+
+    "💎 b19 深度ROC超跌反彈": {
+        "desc": "【💎 V22.3 紙上復活｜實盤白名單｜⚠️ 輕倉 + 熊市豁免】"
+                "b17 深度版：5日ROC < -10%（更深急跌），收盤 < MA20，RSI<45，陽燭。"
+                "出場：s2 布林上軌 + 超時20日（時間出場與回測對齊，無止損 T+1 偏差），MIN5。"
+                "Phase 5 證據（混合真實回報）：ROC 深度 -8→-10→-12 = +0.97→+2.49→+3.29 單調高原；"
+                "-10 為唯一過三門格（混合 +2.49% / 正Fold 7/11 / n=1811）。"
+                "剔除 2022 後其餘年份仍 ≈ +1.8%（非單一事件）。"
+                "⚠️ alpha 核心在恐慌環境（強熊市 +8.54% 最肥、震盪市 -2.80% 最毒）→ "
+                "須配 BEAR_EXEMPT_PRESETS 熊市豁免才拿得到 +2.49%（剔硬熊僅 +1.48%）。"
+                "⚠️ 事件集中（強熊市 266 筆 ≈ 2-3 episode）→ 輕倉，待帳本累積 30+ 已平倉再評真錢定倉。",
+        "buy":  (False, False, False, False, False, False, False, False,
+                 False, False, False, False, False, False, False, False, False, False, True),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
+        "max_hold_days": 20,
     },
 
     # ════════════════════════════════════════════════════════════
@@ -213,7 +264,7 @@ ACTIVE_PRESETS = {
                 "IS +7.09% / OOS +7.73% / 退化 -9.0% / 正Fold 10/11 / 末Fold 15 筆。"
                 "增量 +0.70% vs b12 單訊號，末 Fold 樣本厚，乾淨升格。",
         "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, True,  False, False, True,  False, False, False),
+                 False, False, False, True,  False, False, True,  False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -225,7 +276,7 @@ ACTIVE_PRESETS = {
                 "IS +6.21% / OOS +7.91% / 退化 -27.4% / 正Fold 11/11（完美）/ 末Fold 5 筆。"
                 "增量 +1.59% vs b13。正Fold 全場唯一 11/11，但末 Fold 僅 5 筆，**實盤輕倉**。",
         "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, True,  False, True,  False, False, False),
+                 False, False, False, False, True,  False, True,  False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -237,7 +288,7 @@ ACTIVE_PRESETS = {
                 "IS +7.70% / OOS +9.04%（全場最高）/ 退化 -17.4% / 正Fold 10/11 / 末Fold 8 筆。"
                 "增量 +0.92% vs b17，OOS 全候選最高，但末 Fold 僅 8 筆，**實盤輕倉**。",
         "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, False, False, True,  False, True,  False),
+                 False, False, False, False, False, False, True,  False, True,  False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -252,7 +303,7 @@ ACTIVE_PRESETS = {
                 "PIT WF：IS +8.15% / OOS +7.99% / 退化 -30.2% / 正Fold 7/7。"
                 "V21 重跑（2026-05-28）：OOS +7.21% / 正Fold 6/7。"
                 "⚠️ Fold2 與 Fold7 各僅 7 筆，**實盤建議輕倉**。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, True,  False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, True,  False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -276,7 +327,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY V22.2 Phase 4 移入 2026-06-11】b6（RSI<30）+ b12 AND，s2 出場，MIN5。"
                 "誠實口徑（止損10% + 延伸追蹤）：真實出場 -2.41% / 真實勝率 25.7% / 差距 -5.0pp，"
                 "連 10% 止損都清不乾淨——b6 進的是還在崩的票，接飛刀接晚了。確認無 alpha，降 LEGACY。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, True,  False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, True,  False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -292,7 +343,7 @@ LEGACY_PRESETS = {
                 "印證 V22.1 衍生鐵則 5：b13（RSI<40）與 b17（RSI<45）RSI 條件冗餘，"
                 "b13 稀釋了 b17，不如直接用 b17 單訊號。",
         "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, True,  False, False, False, True,  False),
+                 False, False, False, False, True,  False, False, False, True,  False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -308,7 +359,7 @@ LEGACY_PRESETS = {
                 "PIT V21（2026-05-28）：OOS +8.76% / 正Fold 5/7 / Fold7=6 筆。"
                 "降級原因：對照單訊號 b17 同期 39 筆，加 b6 後砍 84%，符合衍生鐵則 2。",
         "buy":  (False, False, False, False, False, True,  False, False,
-                 False, False, False, False, False, False, False, False, True, False),
+                 False, False, False, False, False, False, False, False, True, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -318,7 +369,7 @@ LEGACY_PRESETS = {
                 "PIT V21（2026-05-28）：OOS +7.98% / 正Fold 5/6 / Fold7=1 筆。"
                 "降級原因：對照 b18 同期 59 筆，加 b6 後砍 98%（剩 1 筆），符合衍生鐵則 2。",
         "buy":  (False, False, False, False, False, True,  False, False,
-                 False, False, False, False, False, False, False, False, False, True),
+                 False, False, False, False, False, False, False, False, False, True, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -327,7 +378,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】b13 AND b6 雙確認。"
                 "PIT V21（2026-05-28）：OOS +8.67% / 有效6/7 / Fold7=0 筆。"
                 "降級原因：Fold7 訊號完全消失，Fold2 僅 2 筆，符合衍生鐵則 2。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, True,  False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, True,  False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -338,7 +389,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】b12 資金流向 + s2+s6+s8 三重出場，MIN30。"
                 "PIT V21（2026-05-28）：OOS +2.41% / 正Fold 3/6。"
                 "降級原因：與 💎 b12+b6 重疊，三重出場 + MIN30 無真實 alpha 增量。",
-        "buy":  (False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
@@ -347,7 +398,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】冠軍（b6/s2+s6+s8）+ 季節性（1/4/10月），MIN30。"
                 "PIT V21（2026-05-28）：OOS +4.16% / 正Fold 5/6 / Fold5=3 筆。"
                 "降級原因：b6 家族雜訊，符合衍生鐵則 1。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
         "seasonal_filter": True,
@@ -356,7 +407,7 @@ LEGACY_PRESETS = {
     "🔬 均值回歸+季節性 [LEGACY]": {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】純均值回歸（b6/s6）+ 季節性，MIN30。"
                 "PIT V21（2026-05-28）：OOS +3.18% / 正Fold 4/6。降級原因：b6 家族雜訊。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
         "seasonal_filter": True,
@@ -367,7 +418,7 @@ LEGACY_PRESETS = {
     "🔬 b11+b5 KDJ超賣布林雙確認 [LEGACY]": {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】b5 AND b11 AND 進場，s8 出場，MIN5。"
                 "PIT V21（2026-05-28）：**無交易**（雙指標 AND 歸零）。符合衍生鐵則 4。",
-        "buy":  (False, False, False, False, True,  False, False, False, False, False, True,  False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, True,  False, False, False, False, False, True,  False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, False, False, True),
         "min_hold_days": 5,
     },
@@ -375,7 +426,7 @@ LEGACY_PRESETS = {
     "🔬 b3+b7+b8 底背離趨勢確認 [LEGACY]": {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】b3 AND b7 AND b8，s5+s6 出場，MIN10。"
                 "PIT V21（2026-05-28）：**無交易**（三條件 AND 歸零）。符合衍生鐵則 3、4。",
-        "buy":  (False, False, True,  False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, True,  False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, True,  True,  False, False),
         "min_hold_days": 10,
     },
@@ -387,7 +438,7 @@ LEGACY_PRESETS = {
     "💎 純粹均值回歸 [對照]": {
         "desc": "【📚 LEGACY 對照組】純 b6/s6，無 MIN。"
                 "PIT V21（2026-05-28）：OOS +2.16% / 正Fold 3/6（b6 雜訊區間）。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "cooldown_days": 0,
     },
@@ -395,7 +446,7 @@ LEGACY_PRESETS = {
     "💎+s2 三重出場 [無MIN對照]": {
         "desc": "【📚 LEGACY 對照組】b6/s2+s6+s8 無 MIN。"
                 "PIT V21（2026-05-28）：OOS +0.32% / 正Fold 3/6（b6 雜訊最低端）。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "cooldown_days": 0,
     },
@@ -403,7 +454,7 @@ LEGACY_PRESETS = {
     "💎M20 純粹均值回歸MIN20 [對照]": {
         "desc": "【📚 LEGACY MIN 參數對照】b6/s6 MIN20。"
                 "PIT V21（2026-05-28）：OOS +2.05% / 正Fold 3/6（b6 雜訊區間）。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 20,
     },
@@ -411,7 +462,7 @@ LEGACY_PRESETS = {
     "🔄基準 純MACD週期 [對照]": {
         "desc": "【📚 LEGACY 對照】純 b7/s6 無過濾。"
                 "PIT V21（2026-05-28）：OOS **-0.94%** / 正Fold 2/6。符合衍生鐵則 3。",
-        "buy":  (False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "cooldown_days": 0,
     },
@@ -419,7 +470,7 @@ LEGACY_PRESETS = {
     "💎K30 純KDJ超賣MIN30 [已驗證]": {
         "desc": "【📚 LEGACY 已驗證失敗】b11 KDJ超賣 MIN30。"
                 "PIT V21（2026-05-28）：OOS **-1.18%** / 正Fold 3/7。指標閾值類無 alpha。",
-        "buy":  (False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -427,7 +478,7 @@ LEGACY_PRESETS = {
     "🔄+ MACD+趨勢MIN30 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-09】MACD金叉+趨勢確認，MACD死叉出，MIN30。"
                 "PIT V21（2026-05-28）：OOS **-0.43%** / 正Fold 4/6。符合衍生鐵則 3。",
-        "buy":  (False, False, False, False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -435,7 +486,7 @@ LEGACY_PRESETS = {
     "⚡ 突破確認 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】強牛市突破策略。"
                 "PIT V21（2026-05-28）：OOS **-1.25%** / 正Fold 3/7。符合衍生鐵則 3。",
-        "buy":  (True,  False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False),
+        "buy":  (True,  False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False),
         "sell": (True,  False, False, True,  False, False, False, False),
         "cooldown_days": 5,
     },
@@ -443,7 +494,7 @@ LEGACY_PRESETS = {
     "💎K+ M30 雙超賣雙出MIN30 [精選→LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b6+b11 KDJ 雙超賣 + 雙出場 MIN30。"
                 "PIT V21（2026-05-28）：OOS +0.53% / 正Fold 3/5（b6/KDJ 雜訊區間）。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, True,  False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, True,  False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
@@ -451,7 +502,7 @@ LEGACY_PRESETS = {
     "💎KK30 RSI+KDJ雙超賣MIN30 [精選→LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b6+b11 RSI+KDJ 雙超賣 MIN30。"
                 "PIT V21（2026-05-28）：OOS **-1.48%** / 正Fold 3/6。雙指標疊加仍雜訊。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, True,  False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, True,  False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -460,35 +511,35 @@ LEGACY_PRESETS = {
 
     "🔬 相對強弱測試 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b9 相對強弱單訊號。b9 已 DEPRECATED 永久 False。",
-        "buy":  (False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
 
     "🔬 b9+冠軍買入_冠軍出場 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b9 已 DEPRECATED 永久 False，必然無交易。",
-        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
 
     "🔬 b9+冠軍買入_均值回歸出場 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b9 已 DEPRECATED 永久 False，必然無交易。",
-        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, True,  False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
 
     "🔬 b9+均值回歸買入_冠軍出場 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b9 已 DEPRECATED 永久 False，必然無交易。",
-        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
 
     "🔬 b9+均值回歸買入_均值回歸出場 [LEGACY]": {
         "desc": "【📚 LEGACY 移入 2026-05-10】b9 已 DEPRECATED 永久 False，必然無交易。",
-        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, True,  True,  False, False, True,  False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -499,7 +550,7 @@ LEGACY_PRESETS = {
         "desc": "【⚠️ LEGACY BIAS 警示】b5+b6/s2+s5。"
                 "PIT V21（2026-05-28）：OOS +7.64% / 正Fold 6/7。"
                 "⚠️ 數字高但比延伸追蹤 +3.81% 高，可能 survivorship bias 殘留，**勿復活**。",
-        "buy":  (False, False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, True,  False, False, False),
         "cooldown_days": 0,
     },
@@ -507,7 +558,7 @@ LEGACY_PRESETS = {
     "🏗️M30 底部形態MIN30 [BIAS-勿實盤]": {
         "desc": "【⚠️ LEGACY BIAS】b4+b7 + MIN30。"
                 "PIT V21（2026-05-28）：OOS +1.63% / 正Fold 3/7。MIN30 強行抓底部假突破。",
-        "buy":  (False, False, False, True,  False, False, True,  False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, True,  False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -515,7 +566,7 @@ LEGACY_PRESETS = {
     "⚡+ 突破確認長持MIN30 [BIAS-勿實盤]": {
         "desc": "【⚠️ LEGACY BIAS】b1+b8 + MACD死叉 + MIN30。"
                 "PIT V21（2026-05-28）：OOS +0.38% / 正Fold 4/7（趨近零）。符合衍生鐵則 3。",
-        "buy":  (True,  False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False),
+        "buy":  (True,  False, False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -524,7 +575,7 @@ LEGACY_PRESETS = {
         "desc": "【⚠️ LEGACY 嚴重過擬合】b6+b8 進場，s6+s8 雙出場，MIN30。"
                 "PIT V21（2026-05-28）：OOS **-1.01%** / 正Fold 2/6（OOS 虧損）。"
                 "教訓：b6（RSI<30）通常在下跌中，此時 b8 不成立，邏輯互斥。",
-        "buy":  (False, False, False, False, False, True,  False, True,  False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, True,  False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
@@ -535,7 +586,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY 移入 2026-05-15，前實盤冠軍】b6 進場，s2+s6+s8 三重出場，MIN30。"
                 "PIT V21（2026-05-28）：OOS +4.39% / 正Fold 5/6（2022-23 熊市虧損）。"
                 "b6 家族最強變體，但數字會飄，不再實盤。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, True,  False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
@@ -543,7 +594,7 @@ LEGACY_PRESETS = {
     "💎M30 純粹均值回歸MIN30": {
         "desc": "【📚 LEGACY 移入 2026-05-15】b6 進場，s6 出場，MIN30。"
                 "PIT V21（2026-05-28）：OOS +2.83% / 正Fold 4/6（b6 雜訊區間）。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -551,7 +602,7 @@ LEGACY_PRESETS = {
     "🔄🔄M30 均值回歸長持MIN30": {
         "desc": "【📚 LEGACY 移入 2026-05-15】b5+b6 進場，s6 出場，MIN30。"
                 "PIT V21（2026-05-28）：OOS +3.95% / 正Fold 4/6（b6 雜訊區間略高端）。",
-        "buy":  (False, False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, True,  True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, False),
         "min_hold_days": 30,
     },
@@ -562,7 +613,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY 移入 2026-05-15】b14 AND b6 雙確認。"
                 "PIT V21（2026-05-28）：OOS +7.18% / 有效4/4 / Fold7=0 筆。符合衍生鐵則 2。",
         "buy":  (False, False, False, False, False, True,  False, False, False, False,
-                 False, False, False, True,  False, False, False, False),
+                 False, False, False, True,  False, False, False, False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
     },
@@ -573,7 +624,7 @@ LEGACY_PRESETS = {
         "desc": "【📚 LEGACY 移入 2026-05-23】b6 進場，s6+s8 雙出場，MIN30。"
                 "PIT V21（2026-05-28）：OOS +1.03% / 正Fold 4/7（接近隨機）。"
                 "2022-23 熊市 Fold1-3 連虧，末 Fold 僅 38 筆，b6 家族同源同症，符合衍生鐵則 1。",
-        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False),
+        "buy":  (False, False, False, False, False, True,  False, False, False, False, False, False, False, False, False, False, False, False, False),
         "sell": (False, False, False, False, False, True,  False, True),
         "min_hold_days": 30,
     },
@@ -582,8 +633,15 @@ LEGACY_PRESETS = {
 
 
 # ══════════════════════════════════════════════════════════════════
-# REGIME_RECOMMENDATIONS -- 8 制度 → 推薦策略對照表（V22.2 更新）
+# REGIME_RECOMMENDATIONS -- 8 制度 → 推薦策略對照表（V22.3 更新）
 # 弱熊市 / 強熊市 設為空 list，視為實盤禁區
+#
+# V22.3 變更（2026-06-12）：
+#   • 熊市觀察 ← 補入 💎 b19 深度ROC超跌反彈（其恐慌環境主場、+2.93%/234筆）。
+#   • 弱熊市 / 強熊市 ← 補入 💎 b19（唯一在 BEAR_EXEMPT_PRESETS 內、可在硬熊推播的策略；
+#     b19 alpha 核心正在此 — 強熊市 +8.54% 最肥。其餘策略仍受熊市閘門封鎖、此處不列）。
+#     注意：弱熊市/強熊市仍是「一般策略」實盤禁區；此處列 b19 純為 daily_scan 熊市豁免時
+#     的推薦依據，multi_scan UI 的硬熊判定（_BEAR_LABELS）仍會擋住整頁買入掃描。
 #
 # V22.2 變更（2026-05-31）：
 #   • 牛市警惕 ← 補入 💎 b13 縮量反轉（防呆冠軍 +10.86% / 109筆 / 6fold）
@@ -620,14 +678,14 @@ REGIME_RECOMMENDATIONS = {
         "💎 b17 ROC超跌反彈",
     ],
     "熊市觀察": [
+        "💎 b19 深度ROC超跌反彈",   # V22.3 補入（恐慌環境主場、熊市豁免）
         "💎 b17 ROC超跌反彈",       # V22.2 補入（厚樣本，原靠兩支輕倉漏列）
         "💎 b12+b15 資金流向+下影線",
         "💎 b15+b6 下影線+超賣",
         "💎 b16 下影線資金流入",
-        "💎 b18 Z-Score資金流向",
     ],
-    "弱熊市":   [],   # 實盤禁區
-    "強熊市":   [],   # 實盤禁區
+    "弱熊市":   ["💎 b19 深度ROC超跌反彈"],   # V22.3：唯一熊市豁免策略（一般策略仍禁區）
+    "強熊市":   ["💎 b19 深度ROC超跌反彈"],   # V22.3：alpha 最肥（+8.54%），唯一熊市豁免策略
     "震盪市": [
         "💎 b15+b17 下影線+急跌",
         "💎 b12+b15 資金流向+下影線",
@@ -663,11 +721,31 @@ STRATEGY_PRESETS = {**ACTIVE_PRESETS, **LEGACY_PRESETS}
 # V22.2 Phase 4 結論：全 ACTIVE 在 survivorship 誠實口徑下打平/負，無一過 +2% 實盤門檻
 # → 清空白名單，停止所有實盤推播。ACTIVE_PRESETS 仍保留供分析/回測/制度矩陣使用。
 #
+# V22.3（2026-06-12）：b19 深度ROC 通過混合真實回報 +2.49% 三門驗證（Phase 5），
+#   為路線 A 後首支復活策略。紙上向前驗證中（非真錢）；待帳本累積 30+ 已平倉再評真錢定倉。
+#
 # 復活方式（可逆）：未來某策略以「真實出場%／混合真實回報」通過驗證，
 #   把它的完整 key（含 💎 前綴，需與 ACTIVE_PRESETS 一字不差）加入下方集合即可。
-#   例：LIVE_PRESET_KEYS = {"💎 b17 ROC超跌反彈"}
 # ⚠️ 變更此集合務必同步協調帳本 reset（避免新舊口徑混在同一份帳本）。
-LIVE_PRESET_KEYS: set = set()   # 路線 A：無實盤策略
+LIVE_PRESET_KEYS: set = {
+    "💎 b19 深度ROC超跌反彈",   # V22.3 紙上復活（混合真實回報 +2.49%，須配熊市豁免）
+}
+
+# ══════════════════════════════════════════════════════════════════
+# BEAR_EXEMPT_PRESETS -- 熊市閘門豁免白名單（V22.3 新增）
+# ══════════════════════════════════════════════════════════════════
+# daily_scan 預設在 BEAR_LABELS_HARD（強熊市/弱熊市）完全停止掃描（實盤禁區）。
+# 但 b19 的 alpha 核心正在恐慌環境（強熊市混合 +8.54% 最肥）；若硬熊一律封鎖，
+# 線上真實預期僅 +1.48%（剔硬熊）— 不過門。故對「此集合內的策略」豁免熊市閘門，
+# 讓它們在硬熊制度仍可被掃描 / 推播 / 記帳（per-strategy 豁免，非全域解禁）。
+#
+# 機制（daily_scan）：硬熊制度下，一般策略全停；但若 BEAR_EXEMPT_PRESETS 非空，
+#   仍對「LIVE_PRESETS ∩ BEAR_EXEMPT_PRESETS」跑掃描並推播（帶熊市風險標註）。
+# ⚠️ 豁免 ≠ 無風險：熊市接深跌反彈的回撤與心理壓力是另一量級，故 b19 同列輕倉。
+# 增減只需編輯本集合（單常數模式，仿 LIGHT_POSITION_PRESETS）。
+BEAR_EXEMPT_PRESETS: set = {
+    "💎 b19 深度ROC超跌反彈",
+}
 
 # 🟡-7（AUDIT-G 2026-06-03）：PRESET_NAMES 已刪除（全 app 無 import，純死碼）。
 # PRESET_CUSTOM 仍被 backtest / buy_scan / sell_scan 使用，保留。
@@ -678,7 +756,7 @@ BUY_LABELS = [
     "Ⓑ5 布林下軌",      "Ⓑ6 RSI超賣",      "Ⓑ7 MACD金叉",    "Ⓑ8 趨勢確認",
     "Ⓑ9 相對強弱(停用)", "Ⓑ10 縮量回調",    "Ⓑ11 KDJ超賣金叉", "Ⓑ12 資金流向",
     "Ⓑ13 縮量反轉",     "Ⓑ14 低位吞噬",    "Ⓑ15 長下影線",    "Ⓑ16 下影線資金流入",
-    "Ⓑ17 ROC超跌反彈",  "Ⓑ18 Z-Score資金流向",
+    "Ⓑ17 ROC超跌反彈",  "Ⓑ18 Z-Score資金流向", "Ⓑ19 深度ROC超跌反彈",
 ]
 SELL_LABELS = [
     "Ⓢ1 頭部破MA20", "Ⓢ2 布林上軌", "Ⓢ3 縮量頂部", "Ⓢ4 放量急跌",
@@ -687,7 +765,7 @@ SELL_LABELS = [
 
 B_NAMES = ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8",
            "b9", "b10", "b11", "b12", "b13", "b14", "b15", "b16",
-           "b17", "b18"]
+           "b17", "b18", "b19"]
 S_NAMES = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"]
 
 # TradingView Screener
@@ -720,13 +798,14 @@ SLIPPAGE_PCT   = 0.001    # 單邊滑點（市場衝擊成本，買賣各扣一�
 # 🟡-7（AUDIT-G 2026-06-03）：BEAR_LABELS_SOFT 已刪除（無任何消費端）。
 # 「熊市觀察＝觀察區、允許保守策略」的語意現由 REGIME_RECOMMENDATIONS["熊市觀察"]
 # 直接表達（該制度有一份推薦清單；不在 BEAR_LABELS_HARD 內，故掃描不會被硬停）。
-BEAR_LABELS_HARD = {"弱熊市", "強熊市"}   # 實盤禁區，掃描完全停止
+BEAR_LABELS_HARD = {"弱熊市", "強熊市"}   # 實盤禁區，掃描完全停止（BEAR_EXEMPT_PRESETS 例外）
 # ── 實盤倉位提示 ─────────────────────────────────────────────────────────────
 # 樣本薄 / 數字會飄 / 風險偏高的輔助策略：daily_scan 推播時加「⚠️輕倉」標記，
-# 提醒實盤勿重倉。依 HANDOVER19 第五點 + HANDOVER21 b14 降權標註。
+# 提醒實盤勿重倉。依 HANDOVER19 第五點 + HANDOVER21 b14 降權標註 + V22.3 b19 事件集中。
 LIGHT_POSITION_PRESETS = {
     "💎 b13+b15 縮量反轉+下影線",   # 末 Fold 5 筆，樣本薄
     "💎 b15+b17 下影線+急跌",        # 末 Fold 8 筆，樣本薄
     "💎 b15+b6 下影線+超賣",         # Fold2/Fold7 各 7 筆，樣本薄
     "💎 b14 低位吞噬",               # V22.2：MC 連四輪最弱（Sharpe 0.176、回撤 -88.7%），高波動降權
+    "💎 b19 深度ROC超跌反彈",        # V22.3：事件集中（強熊市 266 筆≈2-3 episode），熊市接刀高波動
 }

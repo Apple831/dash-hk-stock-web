@@ -10,6 +10,14 @@ V20 修正：
   1. 牛市策略洩漏：牛市改只掃 LIVE_PRESETS（💎 已驗證），不再洩漏 🔬 測試策略。
   2. 訊息增強：每筆顯示「股票名稱（TradingView，多為中文）」與「共振策略數」，
      並按共振數由多到少排序。名稱查詢失敗時 fallback 顯示代碼。
+
+V22.3 修正（2026-06-12，b19 熊市豁免）：
+  熊市閘門由「完全停止」改為 per-strategy 豁免：
+    • 強/弱熊市（BEAR_LABELS_HARD）下，一般 LIVE 策略仍全停（實盤禁區）；
+    • 但對 LIVE_PRESETS ∩ BEAR_EXEMPT_PRESETS（目前僅 b19）續掃並推播，帶熊市風險標註。
+  原因：b19 alpha 核心在恐慌環境（強熊市混合 +8.54% 最肥）；硬熊一律封鎖則線上拿不到
+  回測水位（+2.49% → +1.48%）。豁免 ≠ 無風險 → b19 同列 LIGHT_POSITION，推播帶輕倉標。
+  既有持倉管理（成交 / s2 / 止損 / 超時平倉）原本就在熊市照跑，本次不變。
 """
 import os
 import sys
@@ -25,7 +33,7 @@ from regime import detect_regime
 from config import (
     ACTIVE_PRESETS, MIN_BARS_FOR_INDICATORS, BEAR_LABELS_HARD,
     REGIME_RECOMMENDATIONS, TV_URL, TV_HEADERS, LIGHT_POSITION_PRESETS,
-    LIVE_PRESET_KEYS,
+    LIVE_PRESET_KEYS, BEAR_EXEMPT_PRESETS,
 )
 
 # 實盤帳本（附加功能：失敗只印 log，不影響掃描 + Telegram 主流程）
@@ -34,9 +42,12 @@ import paper_ledger as pl
 
 # ── 實盤策略白名單：只推播 key 在 LIVE_PRESET_KEYS 內的策略 ──────────
 # V22.2 Phase 4（路線 A）：改用 config 的 LIVE_PRESET_KEYS（取代舊「💎 前綴」判定）。
-# 目前白名單為空 → 不推播任何實盤訊號（誠實口徑下全 ACTIVE 打平/負）。
-# 要復活某策略：在 config.LIVE_PRESET_KEYS 加入其完整 key 即可（可逆）。
+# V22.3：白名單含 b19（紙上向前驗證）。要復活/下架某策略：編輯 config.LIVE_PRESET_KEYS。
 LIVE_PRESETS = {name: p for name, p in ACTIVE_PRESETS.items() if name in LIVE_PRESET_KEYS}
+
+# ── 熊市豁免子集：硬熊制度下仍可掃描/推播的 LIVE 策略 ────────────────
+# = LIVE_PRESETS ∩ BEAR_EXEMPT_PRESETS（目前僅 b19）。空集則硬熊維持完全停止（舊行為）。
+BEAR_EXEMPT_LIVE = {name: p for name, p in LIVE_PRESETS.items() if name in BEAR_EXEMPT_PRESETS}
 
 
 # ── 股票名稱：用 TradingView screener 一次抓全部（多為中文名）──────
@@ -235,6 +246,10 @@ def _run_ledger(hits: list, date_str: str) -> str:
     env 缺失或任何失敗都只印 log 回 ""，絕不拖垮掃描 + Telegram 主流程。
     即使今日 0 hit（心跳 / 熊市閘門）也照跑 pending/open 處理
     （可能有昨天的 pending_buy 要成交、或持倉觸發 s2 要平倉）。
+
+    strategy_params 從「全 LIVE（含熊市豁免）」帶風險出場參數：
+      帳本可能持有任一 LIVE 策略的舊倉（含 b19），平倉判定需要其 stop/max_hold，
+      故用 LIVE_PRESETS 全集而非當日掃描子集，避免漏帶 b19 的 max_hold_days=20。
     """
     if not pl.is_enabled():
         print("[LEDGER] 未設定 GH_TOKEN / GH_REPO，跳過帳本更新", flush=True)
@@ -275,16 +290,47 @@ def main() -> int:
         ma_gap_pct = regime.get("ma_gap_pct", 0.0)
         sign = "+" if ma_gap_pct >= 0 else ""
 
-        # ── 熊市閘門：不執行任何掃描 ──
+        # ── 熊市閘門：一般策略停，但 BEAR_EXEMPT_LIVE 豁免續掃（V22.3）──
         if label in BEAR_LABELS_HARD:
-            print(f"[GATE] 熊市制度（{label}），不執行掃描", flush=True)
-            gate_msg = f"⛔ [制度閘門] 當前制度：{label}，全策略暫停，今日 0 個買入訊號"
-            # 熊市閘門只停「新買入訊號」，既有持倉仍要管理（成交 / s2 平倉）
-            tail = _run_ledger([], date_str)
-            if tail:
-                gate_msg += "\n\n" + tail
-            send_telegram(gate_msg)
-            return 0
+            if BEAR_EXEMPT_LIVE:
+                # 只掃熊市豁免策略（目前 b19）；推薦清單過濾後再掃，帶熊市風險標註。
+                rec_names = REGIME_RECOMMENDATIONS.get(label, [])
+                exempt_filtered = {
+                    k: v for k, v in BEAR_EXEMPT_LIVE.items()
+                    if (not rec_names) or (k in rec_names)
+                } or BEAR_EXEMPT_LIVE   # 若該制度沒列推薦，退回掃全部豁免策略
+                print(f"[GATE] 熊市制度（{label}），一般策略停；豁免掃描 {len(exempt_filtered)} 支", flush=True)
+                hits = scan_all(presets=exempt_filtered, current_month=hkt_now.month)
+                prefix = (
+                    f"⛔ [制度閘門] 當前制度：{label}（實盤禁區）。"
+                    f"一般策略全停；僅熊市豁免策略（{len(exempt_filtered)} 支）續掃，"
+                    f"⚠️ 熊市接深跌反彈風險高，務必輕倉。"
+                )
+                if hits:
+                    message = build_message(hits, label, date_str,
+                                            ma_gap_pct=ma_gap_pct, prefix=prefix)
+                else:
+                    message = (
+                        f"{prefix}\n"
+                        f"🏹 港股狙擊手 每日掃描\n📅 {date_str}\n"
+                        f"🌍 恒指制度：{label} | MA缺口 {sign}{ma_gap_pct:.1f}%\n\n"
+                        f"✅ 熊市豁免策略今日無買入訊號，持倉不變"
+                    )
+                tail = _run_ledger(hits, date_str)
+                if tail:
+                    message += "\n\n" + tail
+                print(f"[SCAN] {date_str} 熊市豁免命中 {len(hits)} 隻", flush=True)
+                send_telegram(message)
+                return 0
+            else:
+                # 無豁免策略 → 維持舊行為：完全停止掃描，僅管理既有持倉
+                print(f"[GATE] 熊市制度（{label}），無豁免策略，不執行掃描", flush=True)
+                gate_msg = f"⛔ [制度閘門] 當前制度：{label}，全策略暫停，今日 0 個買入訊號"
+                tail = _run_ledger([], date_str)
+                if tail:
+                    gate_msg += "\n\n" + tail
+                send_telegram(gate_msg)
+                return 0
 
         FULL_SCAN_LABELS = {"強牛市", "弱牛市"}
         if label in FULL_SCAN_LABELS:

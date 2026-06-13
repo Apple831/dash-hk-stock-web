@@ -96,7 +96,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
 
     # ── GATE 移除 ──────────────────────────────────────────────────
     # 原代碼：b5/b6 在 hsi_bullish=False（熊市）時強制為 False。
-    # 移除原因：WF 驗證顯示 b5+b6 在熊市（弱熊+8%/204筆、強熊+12.5%/228筆）
+    # 移除原因：WF 驗證顯示 b5+b6 在熊市（弱熊+8%/強熊+12.5%）
     # 表現優於牛市，均值回歸策略在高波動環境反而更有效。
     # 保留 gate 導致 WF 與實盤掃描行為不一致，現統一為全天候觸發。
     # hsi_bullish 參數保留以維持向後相容，但不再影響 b5/b6。
@@ -208,6 +208,21 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
         (c["Close"] > c["Open"])
     )
 
+    # ── b19: 深度ROC超跌反彈（V22.3 新增，2026-06-12）──────────
+    # b17 的深度版：roc5 門檻從 -8% 加深到 -10%，其餘條件同構。
+    # 獨立計算、不動 b17 原生定義（b15+b17 等既有組合不受牽連）。
+    # Phase 5 證據：ROC 深度梯度 -8→-10→-12 = 混合真實回報
+    # +0.97→+2.49→+3.29 單調遞增（真高原）；-10 為唯一同時通過
+    # 「混合 ≥ +2.0% / 正Fold ≥ 60% / 樣本 ≥ 500」三道門的深度。
+    # alpha 核心在恐慌環境（強熊市 +8.54% 最肥、震盪市 -2.80% 最毒），
+    # 實盤需配合 config.BEAR_EXEMPT_PRESETS 熊市豁免才拿得到回測水位。
+    b19 = (
+        (roc5 < -10) &
+        (c["Close"] < c["MA20"]) &
+        (c["RSI"] < 45) &
+        (c["Close"] > c["Open"])
+    )
+
     # ── 賣出訊號 ──────────────────────────────────────────────────
     close_ma10u = df["Close"].rolling(10).mean().shift(1)
     ma60_ma10u  = df["MA60"].rolling(10).mean().shift(1)
@@ -249,7 +264,7 @@ def precompute_signals(df: pd.DataFrame, hsi_bullish: bool = True) -> dict:
                     ("b6",b6),("b7",b7),("b8",b8),("b9",b9),("b10",b10),
                     ("b11",b11),("b12",b12),
                     ("b13",b13),("b14",b14),("b15",b15),("b16",b16),
-                    ("b17",b17),("b18",b18),
+                    ("b17",b17),("b18",b18),("b19",b19),
                     ("s1",s1),("s2",s2),("s3",s3),("s4",s4),
                     ("s5",s5),("s6",s6),("s7",s7),("s8",s8)]:
         sigs[name] = s.fillna(False) & ~mask

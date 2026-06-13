@@ -5,6 +5,8 @@
 # v17 修復（2026-04-26）— 來自策略邏輯審查報告：
 # 🔴 Bug 3: evaluate_signals 漏 b11 (KDJ超賣金叉) 和 s8 (KDJ高位死叉)
 #   修復：補上對應的描述，讓個股分析 Tab 看得到實盤主力策略的 s8 訊號
+#
+# V22.3（2026-06-12）：補 b19 深度ROC超跌反彈描述（buy tuple 18→19，避免分析頁漏顯示）。
 # ══════════════════════════════════════════════════════════════════
 
 import pandas as pd
@@ -110,6 +112,10 @@ def evaluate_signals(df: pd.DataFrame) -> dict:
         ("Ⓑ18 Z-Score資金流向（vol_z 2–5倍標準差 + MA20下方 + 陽燭）",
          "vol_z=" + (f"{(c['Volume'] - vol_avg) / _s:.2f}" if (_s := df['Volume'].rolling(20).std().iloc[-1]) and _s == _s else "N/A"),
          last["b18"]),
+        # ── V22.3 新增：b19 深度ROC超跌反彈（b17 深度版，roc5<-10）─────
+        ("Ⓑ19 深度ROC超跌反彈（5日急跌>10% + RSI<45 + MA20下方 + 陽燭｜⚠️輕倉+熊市豁免）",
+         f"ROC5={(c['Close'] / df['Close'].iloc[-6] - 1) * 100:.2f}%（需<-10%）  RSI={c['RSI']:.1f}",
+         last["b19"]),
     ]
 
     pct_chg = (c["Close"] - p["Close"]) / p["Close"] * 100
