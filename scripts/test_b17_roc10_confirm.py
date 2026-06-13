@@ -60,8 +60,8 @@ EXPORT_PATH = os.path.join(ROOT, "data", "b17_roc10_blended_returns.json")
 
 # ── 勝出格參數（鎖定，不掃）─────────────────────────────────────────
 def make_buy(*active) -> tuple:
-    idx = {f"b{i+1}": i for i in range(18)}
-    t = [False] * 18
+    idx = {f"b{i+1}": i for i in range(19)}
+    t = [False] * 19
     for a in active:
         t[idx[a]] = True
     return tuple(t)

@@ -88,8 +88,8 @@ SURVIVOR_GAP_THRESHOLD = -3.0   # 真實出場% − 頂部OOS% < 此值 → 疑 
 # ══════════════════════════════════════════════════════════════════
 def make_buy(*active) -> tuple:
     """active=('b12','b15') → 18-tuple，對應位置 True，其他 False。"""
-    idx = {f"b{i+1}": i for i in range(18)}
-    t = [False] * 18
+    idx = {f"b{i+1}": i for i in range(19)}
+    t = [False] * 19
     for a in active:
         t[idx[a]] = True
     return tuple(t)

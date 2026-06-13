@@ -82,8 +82,8 @@ from config import COMMISSION_PCT, SLIPPAGE_PCT
 # 策略定義（b17 tuple 與 ACTIVE 一字不差；出場固定 T20+s2+MIN5）
 # ══════════════════════════════════════════════════════════════════
 def make_buy(*active) -> tuple:
-    idx = {f"b{i+1}": i for i in range(18)}
-    t = [False] * 18
+    idx = {f"b{i+1}": i for i in range(19)}
+    t = [False] * 19
     for a in active:
         t[idx[a]] = True
     return tuple(t)
