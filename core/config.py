@@ -252,6 +252,33 @@ ACTIVE_PRESETS = {
         "max_hold_days": 20,
     },
 
+    "💎 b17+b6 ROC急跌+超賣": {
+        "desc": "【💎 V22.3 紙上復活｜實盤白名單｜⚠️ 輕倉】b17（ROC急跌）AND b6（RSI<30）雙確認。"
+                "出場：s2 布林上軌 + 超時20日（時間出場，無止損 T+1 偏差），MIN5。"
+                "V22.3 三閘：max_hold 敏感度全橫盤≥+2%（混合真實 h20 +2.67%）、正Fold 過半、"
+                "MC 達 b19 級（破產 0%、Sharpe +0.300、最差回撤 -71%、n~847 最厚）。"
+                "⚠️ 與 b19 同屬 ROC 家族（非獨立分散），b6 雙確認樣本偏薄 → 輕倉。",
+        "buy":  (False, False, False, False, False, True,  False, False,
+                 False, False, False, False, False, False, False, False, True, False, False),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
+        "max_hold_days": 20,
+    },
+
+    "💎 b13+b17 縮量反轉+急跌": {
+        "desc": "【💎 V22.3 紙上復活｜實盤白名單｜⚠️ 輕倉】b13（縮量反轉）AND b17（ROC急跌）雙確認。"
+                "出場：s2 布林上軌 + 超時20日（時間出場，無止損 T+1 偏差），MIN5。"
+                "V22.3 三閘：max_hold 敏感度全橫盤≥+2%（混合真實 h20 +3.07%）、正Fold 過半、"
+                "MC 達 b19 級（破產 0%、Sharpe +0.377 最高、最差回撤 -64%）。"
+                "⚠️ 與 b19 同屬 ROC 家族（非獨立分散），樣本偏薄 → 輕倉。"
+                "（V22.1 曾以止損/cohort 口徑淘汰，V22.3 時間出場口徑下復活。）",
+        "buy":  (False, False, False, False, False, False, False, False,
+                 False, False, False, False, True,  False, False, False, True,  False, False),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
+        "max_hold_days": 20,
+    },
+
     # ════════════════════════════════════════════════════════════
     # ② 形態+形態雙確認（V22.1 升格，2026-05-28）
     # ════════════════════════════════════════════════════════════
@@ -269,18 +296,6 @@ ACTIVE_PRESETS = {
         "min_hold_days": 5,
     },
 
-    "💎 b13+b15 縮量反轉+下影線": {
-        "desc": "【💎 PIT 驗證通過｜⚠️ 輔助：樣本薄，輕倉｜V22.1 形態+形態】"
-                "b13（縮量反轉）AND b15（長下影線）雙形態確認。s2 布林上軌出場，MIN5。"
-                "PIT WF（2026-05-28，11 Fold）："
-                "IS +6.21% / OOS +7.91% / 退化 -27.4% / 正Fold 11/11（完美）/ 末Fold 5 筆。"
-                "增量 +1.59% vs b13。正Fold 全場唯一 11/11，但末 Fold 僅 5 筆，**實盤輕倉**。",
-        "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, True,  False, True,  False, False, False, False),
-        "sell": (False, True,  False, False, False, False, False, False),
-        "min_hold_days": 5,
-    },
-
     "💎 b15+b17 下影線+急跌": {
         "desc": "【💎 PIT 驗證通過｜⚠️ 輔助：樣本薄，輕倉｜V22.1 形態+形態】"
                 "b15（長下影線）AND b17（ROC急跌）跨類別雙確認。s2 布林上軌出場，MIN5。"
@@ -291,6 +306,7 @@ ACTIVE_PRESETS = {
                  False, False, False, False, False, False, True,  False, True,  False, False),
         "sell": (False, True,  False, False, False, False, False, False),
         "min_hold_days": 5,
+        "max_hold_days": 20,   # V22.3 出場改時間版（敏感度全橫盤≥+2%、MC 達 b19 級）
     },
 
     # ════════════════════════════════════════════════════════════
@@ -318,6 +334,17 @@ ACTIVE_PRESETS = {
 # ══════════════════════════════════════════════════════════════════
 
 LEGACY_PRESETS = {
+    "🔬 b13+b15 縮量反轉+下影線 [LEGACY]": {
+        "desc": "【📚 V22.3 降級 LEGACY｜敏感度刷掉】b13 AND b15 雙確認。"
+                "V22.3 max_hold 敏感度：h15→h30 混合真實 +2.31%→+0.92% 單調衰減，"
+                "edge 僅在極短持有成立、放長即垮（非穩健回歸節奏）；樣本最薄（n~323）。"
+                "原 V22.1 OOS +7.91% 為止損/cohort 口徑虛高，時間出場口徑下不成立。",
+        "buy":  (False, False, False, False, False, False, False, False,
+                 False, False, False, False, True,  False, True,  False, False, False, False),
+        "sell": (False, True,  False, False, False, False, False, False),
+        "min_hold_days": 5,
+    },
+
 
     # ══════════════════════════════════════════════════════════════
     # V22.2 Phase 4 降級（2026-06-11，survivorship 誠實口徑審計）
@@ -336,33 +363,11 @@ LEGACY_PRESETS = {
     # V22.1 淘汰（2026-05-28，形態+形態 PIT WF 後）
     # ══════════════════════════════════════════════════════════════
 
-    "🔬 b13+b17 縮量反轉+急跌 [LEGACY]": {
-        "desc": "【📚 LEGACY V22.1 淘汰 2026-05-28】b13 AND b17 雙確認。"
-                "PIT WF（2026-05-28，11 Fold）：OOS +6.01% / 正Fold 8/11 / 末Fold 5 筆。"
-                "淘汰原因：OOS +6.01% **低於** b17 單訊號 +8.12%（增量 -2.11%）。"
-                "印證 V22.1 衍生鐵則 5：b13（RSI<40）與 b17（RSI<45）RSI 條件冗餘，"
-                "b13 稀釋了 b17，不如直接用 b17 單訊號。",
-        "buy":  (False, False, False, False, False, False, False, False,
-                 False, False, False, False, True,  False, False, False, True,  False, False),
-        "sell": (False, True,  False, False, False, False, False, False),
-        "min_hold_days": 5,
-    },
-
     # ══════════════════════════════════════════════════════════════
     # V22 新進 LEGACY（2026-05-28，PIT 全策略複審）
     # ══════════════════════════════════════════════════════════════
 
     # ── b6 雙確認家族：Fold7 樣本砍 80-100%，表頭虛高 ──────────────
-
-    "🔬 b17+b6 ROC急跌+超賣 [LEGACY]": {
-        "desc": "【📚 LEGACY V22 移入 2026-05-28】b17 AND b6 雙確認。"
-                "PIT V21（2026-05-28）：OOS +8.76% / 正Fold 5/7 / Fold7=6 筆。"
-                "降級原因：對照單訊號 b17 同期 39 筆，加 b6 後砍 84%，符合衍生鐵則 2。",
-        "buy":  (False, False, False, False, False, True,  False, False,
-                 False, False, False, False, False, False, False, False, True, False, False),
-        "sell": (False, True,  False, False, False, False, False, False),
-        "min_hold_days": 5,
-    },
 
     "🔬 b18+b6 Z-Score超賣 [LEGACY]": {
         "desc": "【📚 LEGACY V22 移入 2026-05-28】b18 AND b6 雙確認。"
@@ -689,14 +694,12 @@ REGIME_RECOMMENDATIONS = {
     "震盪市": [
         "💎 b15+b17 下影線+急跌",
         "💎 b12+b15 資金流向+下影線",
-        "💎 b13+b15 縮量反轉+下影線",
         "💎 b15+b6 下影線+超賣",
         "💎 b18 Z-Score資金流向",
     ],
     "轉折期": [
         "💎 b12+b15 資金流向+下影線",  # V22.2 補入（該制度實測最佳、是主力，原漏列）
         "💎 b15+b17 下影線+急跌",
-        "💎 b13+b15 縮量反轉+下影線",
         "💎 b16 下影線資金流入",
         "💎 b18 Z-Score資金流向",
     ],
@@ -729,6 +732,9 @@ STRATEGY_PRESETS = {**ACTIVE_PRESETS, **LEGACY_PRESETS}
 # ⚠️ 變更此集合務必同步協調帳本 reset（避免新舊口徑混在同一份帳本）。
 LIVE_PRESET_KEYS: set = {
     "💎 b19 深度ROC超跌反彈",   # V22.3 紙上復活（混合真實回報 +2.49%，須配熊市豁免）
+    "💎 b17+b6 ROC急跌+超賣",       # V22.3 復活（時間出場混合真實 +2.67%，MC 達 b19 級）⚠️輕倉
+    "💎 b15+b17 下影線+急跌",        # V22.3 復活（混合真實 +3.53%，MC 達 b19 級）⚠️輕倉
+    "💎 b13+b17 縮量反轉+急跌",     # V22.3 復活（混合真實 +3.07%，MC Sharpe 最高 +0.377）⚠️輕倉
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -803,9 +809,10 @@ BEAR_LABELS_HARD = {"弱熊市", "強熊市"}   # 實盤禁區，掃描完全停
 # 樣本薄 / 數字會飄 / 風險偏高的輔助策略：daily_scan 推播時加「⚠️輕倉」標記，
 # 提醒實盤勿重倉。依 HANDOVER19 第五點 + HANDOVER21 b14 降權標註 + V22.3 b19 事件集中。
 LIGHT_POSITION_PRESETS = {
-    "💎 b13+b15 縮量反轉+下影線",   # 末 Fold 5 筆，樣本薄
     "💎 b15+b17 下影線+急跌",        # 末 Fold 8 筆，樣本薄
     "💎 b15+b6 下影線+超賣",         # Fold2/Fold7 各 7 筆，樣本薄
     "💎 b14 低位吞噬",               # V22.2：MC 連四輪最弱（Sharpe 0.176、回撤 -88.7%），高波動降權
     "💎 b19 深度ROC超跌反彈",        # V22.3：事件集中（強熊市 266 筆≈2-3 episode），熊市接刀高波動
+    "💎 b17+b6 ROC急跌+超賣",        # V22.3 復活：ROC 家族（與 b19 相關），b6 樣本薄 → 輕倉
+    "💎 b13+b17 縮量反轉+急跌",      # V22.3 復活：ROC 家族（與 b19 相關），樣本薄 → 輕倉
 }
