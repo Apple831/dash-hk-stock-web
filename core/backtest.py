@@ -100,6 +100,7 @@ def run_backtest(
     slippage_pct: float = None,
     commission_pct: float = None,
     stop_loss_pct: float = None,
+    trailing_stop_pct: float = None,
     take_profit_pct: float = None,
     max_hold_days: int = None,
     min_hold_days: int = None,
@@ -213,6 +214,8 @@ def run_backtest(
                         "shares": shares, "entry_px": entry_px,
                         "entry_date": entry_date, "entry_idx": entry_idx,
                         "cost": shares * entry_px,
+                        # 移動止損高水位（持倉期間觀察到的最高 High，初值=進場價）
+                        "hwm": entry_px,
                     })
                     last_entry_idx = entry_idx
 
@@ -239,6 +242,12 @@ def run_backtest(
             if stop_loss_pct and low_i <= ep * (1 - stop_loss_pct / 100):
                 exit_px = ep * (1 - stop_loss_pct / 100)
                 reason  = f"止損 -{stop_loss_pct:.0f}%"
+            elif trailing_stop_pct and low_i <= pos["hwm"] * (1 - trailing_stop_pct / 100):
+                # 移動止損：自持倉期間最高 High 回撤 trailing_stop_pct% 即離場。
+                # 以「前一根（含）為止的高水位」判定（今日 High 在 else 分支才併入），
+                # 避免同一根 high→low 的當沖假觸發；屬盤中觸價，days_held 不 +1。
+                exit_px = pos["hwm"] * (1 - trailing_stop_pct / 100)
+                reason  = f"移動止損 -{trailing_stop_pct:.0f}%"
             elif take_profit_pct and high_i >= ep * (1 + take_profit_pct / 100):
                 exit_px = ep * (1 + take_profit_pct / 100)
                 reason  = f"止盈 +{take_profit_pct:.0f}%"
@@ -295,6 +304,9 @@ def run_backtest(
 
                 # cooldown 從進場日起算（標準語意），平倉不重置計時
             else:
+                # 更新移動止損高水位（今日 High 併入，供下一根判定）
+                if high_i > pos["hwm"]:
+                    pos["hwm"] = high_i
                 keep.append(pos)
         positions = keep
 

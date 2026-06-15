@@ -332,6 +332,29 @@ def main() -> int:
                 send_telegram(gate_msg)
                 return 0
 
+        # ── 震盪市閘門（V22.3 制度曝險疊加，2026-06-15）─────────────────
+        # 證據：LIVE 四支在「震盪市」label（高 CoV 橫盤）的 blended cohort 全為負
+        #   （b19 −2.80% / b17+b6 −3.59% / b15+b17 −2.44% / b13+b17 −3.61%，
+        #    合併 −3.06%、674 筆 broad-sample，非單一事件）。
+        #   只停【震盪市 label】→ 整本帳 blended +2.74%→+4.06%（lift +1.32pp、
+        #   砍 19% 全是虧損單）。四支通用，無豁免（與熊市閘的 b19 豁免不同）。
+        # 只停高 CoV「震盪市」；低 CoV「轉折期」cohort 淨正(+1.78%)→不在此閘、照常走下方流程。
+        # 與熊市閘相同：暫停的只是「進場推播」，既有持倉 s2/止損/超時出場照跑（_run_ledger）。
+        if label == "震盪市":
+            print(f"[GATE] 震盪市制度（高 CoV 橫盤），LIVE 全停進場（疊加閘）；持倉管理照跑", flush=True)
+            gate_msg = (
+                f"🟡 [震盪市閘門] 制度：震盪市（高波動橫盤）\n"
+                f"🏹 港股狙擊手 每日掃描\n📅 {date_str}\n"
+                f"🌍 恒指制度：{label} | MA缺口 {sign}{ma_gap_pct:.1f}%\n\n"
+                f"⛔ 此制度下 LIVE 策略歷史 cohort 為負（−3.06%），暫停進場推播；"
+                f"既有持倉照常管理（出場不受影響）。"
+            )
+            tail = _run_ledger([], date_str)
+            if tail:
+                gate_msg += "\n\n" + tail
+            send_telegram(gate_msg)
+            return 0
+
         FULL_SCAN_LABELS = {"強牛市", "弱牛市"}
         if label in FULL_SCAN_LABELS:
             # 牛市也只掃 💎 實盤策略（LIVE_PRESETS），不洩漏 🔬 測試策略

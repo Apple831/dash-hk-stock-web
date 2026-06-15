@@ -82,6 +82,7 @@ def _get_extended_trades(
     hsi_filter: pd.Series,
     min_hold_days=None,
     cooldown_days=None,
+    trailing_stop_pct=None,
     commission_pct: float = None,
     max_extension_days: int = 365,
     seasonal_filter: bool = False,
@@ -107,6 +108,8 @@ def _get_extended_trades(
             bt_kw["min_hold_days"] = min_hold_days
         if cooldown_days is not None:
             bt_kw["cooldown_days"] = cooldown_days
+        if trailing_stop_pct is not None:
+            bt_kw["trailing_stop_pct"] = trailing_stop_pct
         if seasonal_filter:
             bt_kw["seasonal_filter"] = True
 
@@ -157,6 +160,7 @@ def run_walk_forward(
     max_hold_days: int = None,
     min_hold_days: int = None,
     cooldown_days: int = None,   # 🔴-2 V18 透傳
+    trailing_stop_pct: float = None,
     min_oos_trades: int = 3,
     hsi_filter: pd.Series = None,
     extra_buy_sigs: tuple = None,
@@ -177,6 +181,8 @@ def run_walk_forward(
             kw["min_hold_days"] = min_hold_days
         if cooldown_days is not None:
             kw["cooldown_days"] = cooldown_days
+        if trailing_stop_pct is not None:
+            kw["trailing_stop_pct"] = trailing_stop_pct
         if seasonal_filter:
             kw["seasonal_filter"] = True
         return kw
@@ -265,6 +271,7 @@ def run_walk_forward(
                 hsi_filter,
                 min_hold_days=min_hold_days,
                 cooldown_days=cooldown_days,
+                trailing_stop_pct=trailing_stop_pct,
                 seasonal_filter=seasonal_filter,
             )
 
@@ -369,6 +376,7 @@ def run_portfolio_walk_forward(
     max_hold_days: int = None,
     min_hold_days: int = None,
     cooldown_days: int = None,          # 🔴-2 V18 透傳
+    trailing_stop_pct: float = None,
     max_concurrent_positions: int = None,  # 任意時間點同時持倉上限（None=不限）
     min_oos_trades: int = 5,
     hsi_filter: pd.Series = None,
@@ -391,6 +399,8 @@ def run_portfolio_walk_forward(
             kw["min_hold_days"] = min_hold_days
         if cooldown_days is not None:
             kw["cooldown_days"] = cooldown_days
+        if trailing_stop_pct is not None:
+            kw["trailing_stop_pct"] = trailing_stop_pct
         if seasonal_filter:
             kw["seasonal_filter"] = True
         return kw
@@ -559,6 +569,7 @@ def run_portfolio_walk_forward(
                         hsi_filter,
                         min_hold_days=min_hold_days,
                         cooldown_days=cooldown_days,
+                        trailing_stop_pct=trailing_stop_pct,
                         seasonal_filter=seasonal_filter,
                     )
                     for t in ticker_extended:
