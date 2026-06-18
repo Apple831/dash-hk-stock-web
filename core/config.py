@@ -689,8 +689,8 @@ REGIME_RECOMMENDATIONS = {
         "💎 b15+b6 下影線+超賣",
         "💎 b16 下影線資金流入",
     ],
-    "弱熊市":   ["💎 b19 深度ROC超跌反彈"],   # V22.3：唯一熊市豁免策略（一般策略仍禁區）
-    "強熊市":   ["💎 b19 深度ROC超跌反彈"],   # V22.3：alpha 最肥（+8.54%），唯一熊市豁免策略
+    "弱熊市":   ["💎 b19 深度ROC超跌反彈", "💎 b13+b17 縮量反轉+急跌"],   # V22.3：熊市豁免策略（一般策略仍禁區）；b13+b17 於 2026-06-15 熊市scope WF 過，須同列此處否則 daily_scan exempt_filtered 會靜默漏掉
+    "強熊市":   ["💎 b19 深度ROC超跌反彈", "💎 b13+b17 縮量反轉+急跌"],   # V22.3：alpha 最肥（+8.54%）；b13+b17 同列熊市豁免（與 BEAR_EXEMPT_PRESETS 成對）
     "震盪市": [
         "💎 b15+b17 下影線+急跌",
         "💎 b12+b15 資金流向+下影線",
@@ -751,6 +751,7 @@ LIVE_PRESET_KEYS: set = {
 # 增減只需編輯本集合（單常數模式，仿 LIGHT_POSITION_PRESETS）。
 BEAR_EXEMPT_PRESETS: set = {
     "💎 b19 深度ROC超跌反彈",
+    "💎 b13+b17 縮量反轉+急跌",   # V22.3 熊市scope WF（2026-06-15, test_bear_scope_wf）：硬熊cohort +5.99%、剔最賺episode後 +4.40%、5/6 fold正、N_eff4.5（不劣於 b19）⚠️輕倉
 }
 
 # 🟡-7（AUDIT-G 2026-06-03）：PRESET_NAMES 已刪除（全 app 無 import，純死碼）。

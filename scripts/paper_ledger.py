@@ -44,7 +44,8 @@ def _to_date(s) -> date:
 
 
 def _new_trade(tid: str, ticker: str, strategy: str, resonance_n: int,
-               signal_date: str, stop_loss_pct=None, max_hold_days=None) -> dict:
+               signal_date: str, stop_loss_pct=None, max_hold_days=None,
+               size_mult: float = 1.0) -> dict:
     """建立一筆 pending_buy 帳本紀錄（其餘欄位待成交 / 平倉時填）。"""
     return {
         "id": tid,                       # ticker|strategy|signal_date
@@ -66,7 +67,12 @@ def _new_trade(tid: str, ticker: str, strategy: str, resonance_n: int,
         # None = 不啟用（現有策略全部 None，行為不變）；由 daily_scan 從 preset 帶入。
         "stop_loss_pct": stop_loss_pct,  # 跌破 entry_px×(1-pct/100) 砍倉（百分數，如 10）
         "max_hold_days": max_hold_days,  # 抱滿 N 個 bar 砍倉
-        "trade_size": TRADE_SIZE,
+        # 制度條件式定倉（V22.3, 2026-06-15）：size_mult = 進場日制度的建議定倉乘數
+        # （daily_scan 由前收制度查 REGIME_SIZE_MULT 帶入，PIT 乾淨）。
+        # trade_size 依乘數縮放；size_mult 另存供 summarize 做倉位加權報酬（前向驗證 lift）。
+        # 缺省 1.0 = 齊頭（舊紀錄無此欄 → summarize 視為 1.0，向後相容）。
+        "size_mult": size_mult,
+        "trade_size": round(TRADE_SIZE * size_mult),
     }
 
 
@@ -253,7 +259,8 @@ def process_open_positions(trades: list, sig_fn, price_fn) -> list:
 
 
 def record_new_signals(trades: list, hits: list, signal_date: str,
-                       strategy_params: dict = None) -> list:
+                       strategy_params: dict = None,
+                       size_mult: float = 1.0) -> list:
     """
     把今日 scan_all 的命中（每筆含 presets list + n）登記為 pending_buy。
     去重規則：
@@ -263,8 +270,13 @@ def record_new_signals(trades: list, hits: list, signal_date: str,
 
     strategy_params（可選）：{strategy_name: {"stop_loss_pct":..., "max_hold_days":...}}
       由 daily_scan 從 preset 帶入；缺省 / 缺 key → None（不啟用風險出場，行為不變）。
+
+    size_mult（V22.3 制度條件式定倉）：今日制度的建議定倉乘數（全批同制度故同值）；
+      由 daily_scan 以前收制度查 REGIME_SIZE_MULT 帶入。≤0（如震盪市已閘）→ 不記新倉。
     """
     strategy_params = strategy_params or {}
+    if size_mult <= 0:               # 0× 制度（如震盪市）= 不進場，不記新倉（出場仍在上游照跑）
+        return trades
     open_keys = get_open_keys(trades)
     existing_ids = {t["id"] for t in trades}
     for h in hits:
@@ -281,6 +293,7 @@ def record_new_signals(trades: list, hits: list, signal_date: str,
                 tid, ticker, strategy, n, signal_date,
                 stop_loss_pct=sp.get("stop_loss_pct"),
                 max_hold_days=sp.get("max_hold_days"),
+                size_mult=size_mult,
             ))
             existing_ids.add(tid)
             open_keys.add((ticker, strategy))
@@ -318,6 +331,15 @@ def summarize(trades: list) -> dict:
     holds = [t["hold_bars"] for t in closed if t.get("hold_bars") is not None]
     n_ret = len(rets)
     wins = sum(1 for r in rets if r > 0)
+    # 倉位加權報酬（前向驗證制度定倉 lift）：以 size_mult 為權重的資本加權每筆報酬，
+    # 對照齊頭 avg_return_pct，兩者差即為制度定倉在實盤口徑兌現的 lift。
+    # 舊紀錄無 size_mult → 視為 1.0（向後相容；全 1.0 時兩者相等）。
+    sw_pairs = [(t["return_pct"], float(t.get("size_mult", 1.0) or 0.0))
+                for t in closed if t.get("return_pct") is not None]
+    sw_den = sum(w for _, w in sw_pairs)
+    size_weighted_return_pct = (round(sum(r * w for r, w in sw_pairs) / sw_den, 4)
+                                if sw_den else 0.0)
+    avg_size_mult = round(sw_den / len(sw_pairs), 3) if sw_pairs else 0.0
     return {
         "closed_n": len(closed),
         "open_n": sum(1 for t in trades if t["status"] == "open"),
@@ -325,6 +347,8 @@ def summarize(trades: list) -> dict:
                          if t["status"] in ("pending_buy", "pending_sell")),
         "total_return_pct": round(sum(rets), 4) if rets else 0.0,
         "avg_return_pct": round(sum(rets) / n_ret, 4) if n_ret else 0.0,
+        "size_weighted_return_pct": size_weighted_return_pct,
+        "avg_size_mult": avg_size_mult,
         "win_rate": round(wins / n_ret * 100, 1) if n_ret else 0.0,
         "avg_hold_days": round(sum(holds) / len(holds), 1) if holds else 0.0,
         "by_resonance": _group_stats(closed, lambda t: t.get("resonance_n")),
@@ -381,6 +405,18 @@ def format_ledger_summary(summary: dict) -> str:
         f"持倉中 {summary['open_n']} 筆 ｜ 待成交 {summary['pending_n']} 筆",
         f"　　平均每筆 {avg_sign}{avg_ret}% ｜ 平均持倉 {summary.get('avg_hold_days', 0.0)} 天",
     ]
+
+    # 制度定倉前向驗證：倉位加權每筆 vs 齊頭每筆 + lift（只在有已平倉、且制度乘數非全 1.0 時顯示）
+    sw = summary.get("size_weighted_return_pct", avg_ret)
+    avg_mult = summary.get("avg_size_mult", 1.0)
+    if summary.get("closed_n", 0) > 0 and abs(avg_mult - 1.0) > 1e-9:
+        sw_sign = "+" if sw >= 0 else ""
+        lift = sw - avg_ret
+        lift_sign = "+" if lift >= 0 else ""
+        lines.append(
+            f"　　📊 制度定倉：倉位加權每筆 {sw_sign}{sw}% ｜ vs 齊頭 {avg_sign}{avg_ret}% "
+            f"｜ lift {lift_sign}{round(lift, 2)}pp（平均乘數 {avg_mult}×）"
+        )
 
     res_line = _format_resonance_line(summary.get("by_resonance", {}))
     if res_line:

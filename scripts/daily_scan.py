@@ -46,8 +46,42 @@ import paper_ledger as pl
 LIVE_PRESETS = {name: p for name, p in ACTIVE_PRESETS.items() if name in LIVE_PRESET_KEYS}
 
 # ── 熊市豁免子集：硬熊制度下仍可掃描/推播的 LIVE 策略 ────────────────
-# = LIVE_PRESETS ∩ BEAR_EXEMPT_PRESETS（目前僅 b19）。空集則硬熊維持完全停止（舊行為）。
+# = LIVE_PRESETS ∩ BEAR_EXEMPT_PRESETS（目前 b19 + b13+b17）。空集則硬熊維持完全停止（舊行為）。
 BEAR_EXEMPT_LIVE = {name: p for name, p in LIVE_PRESETS.items() if name in BEAR_EXEMPT_PRESETS}
+
+
+# ── 制度建議定倉乘數（V22.3 制度條件式定倉，2026-06-15, test_regime_sizing）────────
+# 來源：LIVE 四支合併 blended cohort 按【進場日制度】分桶的 ¼-Kelly，經風險折扣（見下）。
+# 性質：純推播「相對定倉建議」標註（如同 ⚠️輕倉）；不改任何掃描 / 出場 / 閘門邏輯。
+#   基準 1.0× = 現行齊頭；總風險預算不變的「重分配」。絕對倉位上限另由 MC 破產率/maxDD 管（解耦）。
+#   實測：制度加權 vs 齊頭 +4.18%→+5.76%、lift +1.58pp、leave-one-regime-out 全過。
+# 折扣理由（★勿照原始 Kelly 全收★）：
+#   • 強熊市原始 1.75× = 海市蜃樓：進場時平均並行 ~196 倉 = 高度相關的單一巨型 bet，
+#     per-trade std 低估尾險 + episode 集中（N_eff~5）→ 封頂 1.0×、務必輕倉，不加碼。
+#   • 弱牛市原始 2.40×：n=37 過擬合、LOO 證非支柱 → 壓回 1.0×。
+#   • 真獎品 = 牛市警惕（broad n=488 / Sharpe 0.36 / 低並行 75）→ 1.5×，最可信加碼對象。
+#   • 震盪市 = 0：已由下方震盪市閘停進場（此處不會走到），列 0 僅為自洽。
+# PIT 乾淨：吃 main() 既有 gating 的『前一收盤制度』label，無前視、不另算。
+REGIME_SIZE_MULT: dict = {
+    "牛市警惕": 1.5,   # ✅ 乾淨的肥：broad / 高 Sharpe / 低並行，最可信加碼
+    "弱牛市":   1.0,   # n=37 過擬合，壓中性
+    "強牛市":   1.0,   # n=17 樣本薄，中性
+    "熊市觀察": 0.6,   # 軟熊、中庸
+    "強熊市":   1.0,   # ⚠ episode 集中 + 並行 ~196，封頂·輕倉，不照 Kelly 加
+    "弱熊市":   0.4,   # 偏淡
+    "轉折期":   0.5,   # 淡但正，小注、不閘
+    "震盪市":   0.0,   # 已閘（不會走到推播）
+}
+
+
+def regime_size_note(label: str) -> str:
+    """回傳該制度的建議定倉標註字串；未知 / 已閘制度回 ""（不顯示，安全預設）。"""
+    m = REGIME_SIZE_MULT.get(label)
+    if not m:                       # None（未知制度）或 0（已閘）→ 不標
+        return ""
+    if label in BEAR_LABELS_HARD:
+        return f"📊 制度建議定倉：{m:g}×（熊市封頂·務必輕倉；相對基準，絕對上限另管）"
+    return f"📊 制度建議定倉：{m:g}×（相對基準 1.0×；絕對上限另由倉位管理管）"
 
 
 # ── 股票名稱：用 TradingView screener 一次抓全部（多為中文名）──────
@@ -157,6 +191,7 @@ def build_message(hits: list[dict], regime_label: str, date_str: str,
                   ma_gap_pct: float = 0.0, prefix: str = "") -> str:
     sign = "+" if ma_gap_pct >= 0 else ""
     header_regime = f"🌍 恒指制度：{regime_label} | MA缺口 {sign}{ma_gap_pct:.1f}% | 今日掃描 {len(hits)} 隻"
+    size_note = regime_size_note(regime_label)
     lines = []
     if prefix:
         lines.append(prefix)
@@ -164,6 +199,10 @@ def build_message(hits: list[dict], regime_label: str, date_str: str,
         "🏹 港股狙擊手 每日掃描",
         f"📅 {date_str}",
         header_regime,
+    ]
+    if size_note:
+        lines.append(size_note)
+    lines += [
         "",
         "🟢 買入訊號：",
     ]
@@ -240,7 +279,7 @@ def _make_market_fns() -> tuple:
     return price_fn, sig_fn
 
 
-def _run_ledger(hits: list, date_str: str) -> str:
+def _run_ledger(hits: list, date_str: str, size_mult: float = 1.0) -> str:
     """
     更新實盤帳本並回傳 Telegram 摘要尾巴。整段 try/except 包住：
     env 缺失或任何失敗都只印 log 回 ""，絕不拖垮掃描 + Telegram 主流程。
@@ -268,7 +307,7 @@ def _run_ledger(hits: list, date_str: str) -> str:
         trades, sha = pl.load_ledger()
         pl.process_pending_buys(trades, price_fn)            # 1. 昨日訊號 → 今日開盤成交
         pl.process_open_positions(trades, sig_fn, price_fn)  # 2. 出場（止損→超時→s2，T+1）
-        pl.record_new_signals(trades, hits, date_str, strategy_params)  # 3. 今日新訊號
+        pl.record_new_signals(trades, hits, date_str, strategy_params, size_mult=size_mult)  # 3. 今日新訊號（按制度乘數縮放記倉）
         pl.save_ledger(trades, sha, f"chore(ledger): update {date_str}")
         summary = pl.summarize(trades)
         return pl.format_ledger_summary(summary)
@@ -289,6 +328,8 @@ def main() -> int:
         bucket = regime.get("bucket", "🟡 震盪市")
         ma_gap_pct = regime.get("ma_gap_pct", 0.0)
         sign = "+" if ma_gap_pct >= 0 else ""
+        # 制度建議定倉乘數（PIT：用前收制度 label）；帶入帳本記倉，使紙上帳本前向驗證 lift。
+        size_mult = REGIME_SIZE_MULT.get(label, 1.0)
 
         # ── 熊市閘門：一般策略停，但 BEAR_EXEMPT_LIVE 豁免續掃（V22.3）──
         if label in BEAR_LABELS_HARD:
@@ -316,7 +357,7 @@ def main() -> int:
                         f"🌍 恒指制度：{label} | MA缺口 {sign}{ma_gap_pct:.1f}%\n\n"
                         f"✅ 熊市豁免策略今日無買入訊號，持倉不變"
                     )
-                tail = _run_ledger(hits, date_str)
+                tail = _run_ledger(hits, date_str, size_mult=size_mult)
                 if tail:
                     message += "\n\n" + tail
                 print(f"[SCAN] {date_str} 熊市豁免命中 {len(hits)} 隻", flush=True)
@@ -326,7 +367,7 @@ def main() -> int:
                 # 無豁免策略 → 維持舊行為：完全停止掃描，僅管理既有持倉
                 print(f"[GATE] 熊市制度（{label}），無豁免策略，不執行掃描", flush=True)
                 gate_msg = f"⛔ [制度閘門] 當前制度：{label}，全策略暫停，今日 0 個買入訊號"
-                tail = _run_ledger([], date_str)
+                tail = _run_ledger([], date_str, size_mult=size_mult)
                 if tail:
                     gate_msg += "\n\n" + tail
                 send_telegram(gate_msg)
@@ -349,7 +390,7 @@ def main() -> int:
                 f"⛔ 此制度下 LIVE 策略歷史 cohort 為負（−3.06%），暫停進場推播；"
                 f"既有持倉照常管理（出場不受影響）。"
             )
-            tail = _run_ledger([], date_str)
+            tail = _run_ledger([], date_str, size_mult=size_mult)
             if tail:
                 gate_msg += "\n\n" + tail
             send_telegram(gate_msg)
@@ -383,14 +424,14 @@ def main() -> int:
             )
             if prefix:
                 heartbeat = prefix + "\n" + heartbeat
-            tail = _run_ledger([], date_str)
+            tail = _run_ledger([], date_str, size_mult=size_mult)
             if tail:
                 heartbeat += "\n\n" + tail
             send_telegram(heartbeat)
             return 0
 
         message = build_message(hits, label, date_str, ma_gap_pct=ma_gap_pct, prefix=prefix)
-        tail = _run_ledger(hits, date_str)
+        tail = _run_ledger(hits, date_str, size_mult=size_mult)
         if tail:
             message += "\n\n" + tail
         print(f"[SCAN] {date_str} 命中 {len(hits)} 隻，發送 Telegram", flush=True)
