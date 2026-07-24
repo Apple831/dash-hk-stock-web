@@ -18,6 +18,13 @@ V22.3 修正（2026-06-12，b19 熊市豁免）：
   原因：b19 alpha 核心在恐慌環境（強熊市混合 +8.54% 最肥）；硬熊一律封鎖則線上拿不到
   回測水位（+2.49% → +1.48%）。豁免 ≠ 無風險 → b19 同列 LIGHT_POSITION，推播帶輕倉標。
   既有持倉管理（成交 / s2 / 止損 / 超時平倉）原本就在熊市照跑，本次不變。
+
+V22.5 修正（2026-07-23，出場明細上推播）：
+  出場鏈路本來每天都跑，但推播只外露帳本彙總數字（已平倉 N 筆 / 勝率 / 均值），
+  「賣了哪一隻、什麼原因、賺賠多少」看不到，只能開 GitHub 讀 paper_trades.json。
+  改為在買入訊號之後附出場明細兩塊（與買入側 T+1 同構）：
+    🔴 賣出訊號（今日觸發，明早開盤平倉）  ✅ 今日已平倉（已實現報酬）
+  資料源只有帳本既有持倉 → 只報「買過的」，不掃全池 s2；掃描 / 出場 / 閘門邏輯零變動。
 """
 import os
 import sys
@@ -281,10 +288,11 @@ def _make_market_fns() -> tuple:
 
 def _run_ledger(hits: list, date_str: str, size_mult: float = 1.0) -> str:
     """
-    更新實盤帳本並回傳 Telegram 摘要尾巴。整段 try/except 包住：
+    更新實盤帳本並回傳 Telegram 尾巴（出場明細 + 帳本摘要）。整段 try/except 包住：
     env 缺失或任何失敗都只印 log 回 ""，絕不拖垮掃描 + Telegram 主流程。
-    即使今日 0 hit（心跳 / 熊市閘門）也照跑 pending/open 處理
-    （可能有昨天的 pending_buy 要成交、或持倉觸發 s2 要平倉）。
+    即使今日 0 hit（心跳 / 熊市閘門 / 震盪市閘門）也照跑 pending/open 處理
+    （可能有昨天的 pending_buy 要成交、或持倉觸發 s2 要平倉）
+    → 故出場明細在「所有推播路徑」都會出現，不只有命中日（模組 G 覆蓋一致性）。
 
     strategy_params 從「全 LIVE（含熊市豁免）」帶風險出場參數：
       帳本可能持有任一 LIVE 策略的舊倉（含 b19），平倉判定需要其 stop/max_hold，
@@ -305,12 +313,21 @@ def _run_ledger(hits: list, date_str: str, size_mult: float = 1.0) -> str:
             for name, p in LIVE_PRESETS.items()
         }
         trades, sha = pl.load_ledger()
+        prev_status = pl.snapshot_status(trades)             # 0. 處理前狀態快照（供出場事件比對）
         pl.process_pending_buys(trades, price_fn)            # 1. 昨日訊號 → 今日開盤成交
         pl.process_open_positions(trades, sig_fn, price_fn)  # 2. 出場（止損→超時→s2，T+1）
         pl.record_new_signals(trades, hits, date_str, strategy_params, size_mult=size_mult)  # 3. 今日新訊號（按制度乘數縮放記倉）
         pl.save_ledger(trades, sha, f"chore(ledger): update {date_str}")
+        # 4. 出場事件明細（V22.5）：本次新觸發出場（明早平倉）＋ 本次完成平倉（今日已賣）。
+        #    只來自帳本既有持倉 = 天然「只報買過的」，不掃全池 s2。
+        #    放在帳本摘要之前 → 訊息序：買入訊號 → 賣出訊號 → 帳本摘要。
+        exit_block = pl.format_exit_block(
+            pl.collect_exit_events(trades, prev_status),
+            name_fn=get_stock_name, price_fn=price_fn,
+        )
         summary = pl.summarize(trades)
-        return pl.format_ledger_summary(summary)
+        parts = [p for p in (exit_block, pl.format_ledger_summary(summary)) if p]
+        return "\n\n".join(parts)
     except Exception as e:
         print(f"[LEDGER] 帳本更新失敗（不影響主流程）：{type(e).__name__}: {e}", flush=True)
         import traceback

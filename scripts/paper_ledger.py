@@ -423,3 +423,146 @@ def format_ledger_summary(summary: dict) -> str:
         lines.append(res_line)
 
     return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 出場事件明細（V22.5, 2026-07-23）
+#
+# 動機（模組 G「算了、存了、看不到」）：出場鏈路每天都跑，但推播只外露彙總數字
+#   （已平倉 N 筆 / 勝率 / 均值），賣了哪一隻、什麼原因、賺賠多少完全看不到 →
+#   Ivan 每次要開 GitHub 讀 paper_trades.json 才知道。此區段把它接進 Telegram。
+#
+# 設計：與買入側同構。帳本是 T+1，故出場有兩個時點，分兩塊顯示：
+#   • triggered：本次新觸發出場訊號（open → pending_sell），明早開盤平倉 = 「要賣什麼」
+#   • closed   ：本次真正完成平倉（pending_sell → closed），已有 return_pct = 「賣了什麼」
+#   兩者在同一次 cron 內互斥（step2 要求 bar 日期嚴格晚於 sell_signal_date，
+#   故當次觸發者不可能當次平倉），不會重複列出同一筆。
+#
+# 範圍：資料源只有帳本既有持倉 → 天然「只報買過的」，不掃全池 s2。
+# ══════════════════════════════════════════════════════════════════════════════
+def snapshot_status(trades: list) -> dict:
+    """取 {id: status} 快照（供 collect_exit_events 比對狀態轉移）。處理前呼叫。"""
+    return {t.get("id"): t.get("status") for t in trades}
+
+
+def collect_exit_events(trades: list, prev_status: dict) -> dict:
+    """
+    比對「處理前的 status 快照」與現況，回本次 cron 真正發生的出場事件。
+
+    回 {"triggered": [trade,...], "closed": [trade,...]}。
+
+    ★用「狀態轉移」判定而非「日期比對」，故天然免疫兩個坑：
+      • 港股假期跑（Actions 週一至週五照跑、但當日無新 bar）→ 無狀態變化 → 兩塊皆空，
+        不會把昨天的出場又重播一次；
+      • 同日重跑（冪等）→ 第二次跑時 prev 快照已是新狀態 → 不重複計。
+    prev_status 缺該 id（= 本次新登記的訊號）→ 跳過，不可能是出場事件。
+    """
+    prev_status = prev_status or {}
+    triggered, closed = [], []
+    for t in trades:
+        tid = t.get("id")
+        if tid not in prev_status:
+            continue
+        before = prev_status.get(tid)
+        now = t.get("status")
+        if before == now:
+            continue
+        if now == "pending_sell":
+            triggered.append(t)
+        elif now == "closed":
+            closed.append(t)
+    return {"triggered": triggered, "closed": closed}
+
+
+def _exit_pct_str(v) -> str:
+    """報酬百分比字串（帶正負號）；None 回 'n/a'。"""
+    if v is None:
+        return "n/a"
+    return f"{'+' if v >= 0 else ''}{v:.2f}%"
+
+
+def _est_return_pct(trade: dict, price_fn) -> float | None:
+    """
+    對「今日觸發、明早才平倉」的單，用今日收盤估算報酬（僅供參考，非實現值）。
+    口徑對齊實際平倉（扣單邊成本），但實際 exit_px 用的是次日開盤 → 必有出入。
+    取不到價 / 缺 entry_px → 回 None（顯示 n/a，不猜）。
+    """
+    if price_fn is None:
+        return None
+    try:
+        entry_px = trade.get("entry_px")
+        if not entry_px:
+            return None
+        info = price_fn(trade["ticker"])
+        close = info.get("close") if info else None
+        if close is None:
+            return None
+        exit_px = close * (1 - ONE_SIDE_COST)
+        return round((exit_px - entry_px) / entry_px * 100, 2)
+    except Exception:
+        return None
+
+
+def _exit_row(trade: dict, name_fn, price_fn, is_closed: bool) -> str:
+    """組一行出場明細。name_fn / price_fn 為可選注入（取不到一律安全降級）。"""
+    ticker = trade.get("ticker", "?")
+    name = ""
+    if name_fn:
+        try:
+            name = name_fn(ticker) or ""
+        except Exception:
+            name = ""
+    name_part = f" {name}" if name else ""
+    strategy = trade.get("strategy", "?")
+    bars = trade.get("hold_bars")
+    bars_part = f"｜持倉 {bars} bar" if bars is not None else ""
+
+    if is_closed:
+        reason = trade.get("exit_reason") or trade.get("pending_exit_reason") or "?"
+        ret = _exit_pct_str(trade.get("return_pct"))
+        return f"• {ticker}{name_part}｜{strategy}｜{reason}｜{ret}{bars_part}"
+
+    reason = trade.get("pending_exit_reason") or "?"
+    est = _est_return_pct(trade, price_fn)
+    est_part = f"｜估 {_exit_pct_str(est)}" if est is not None else ""
+    return f"• {ticker}{name_part}｜{strategy}｜出場：{reason}{bars_part}{est_part}"
+
+
+def format_exit_block(events: dict, name_fn=None, price_fn=None,
+                      max_rows: int = 15) -> str:
+    """
+    把出場事件組成 Telegram 區塊（接在買入訊號之後）。無事件回 ""（呼叫端不附加）。
+
+    max_rows：每塊最多列幾行，超出以「…另 N 筆」收尾（反彈日可能一次觸發數十筆，
+              避免撐爆 Telegram 4096 字上限）。
+    name_fn 只在真的有出場列時才被呼叫（無事件 → 不觸發任何名稱查詢）。
+    """
+    events = events or {}
+    triggered = events.get("triggered", []) or []
+    closed = events.get("closed", []) or []
+    if not triggered and not closed:
+        return ""
+
+    blocks = []
+
+    if triggered:
+        lines = [f"🔴 賣出訊號（持倉出場，明早開盤平倉）｜{len(triggered)} 筆："]
+        for t in triggered[:max_rows]:
+            lines.append(_exit_row(t, name_fn, price_fn, is_closed=False))
+        if len(triggered) > max_rows:
+            lines.append(f"　…另 {len(triggered) - max_rows} 筆（詳見帳本）")
+        blocks.append("\n".join(lines))
+
+    if closed:
+        rets = [t.get("return_pct") for t in closed if t.get("return_pct") is not None]
+        avg_part = ""
+        if rets:
+            avg_part = f"｜本批均 {_exit_pct_str(sum(rets) / len(rets))}"
+        lines = [f"✅ 今日已平倉｜{len(closed)} 筆{avg_part}："]
+        for t in closed[:max_rows]:
+            lines.append(_exit_row(t, name_fn, price_fn, is_closed=True))
+        if len(closed) > max_rows:
+            lines.append(f"　…另 {len(closed) - max_rows} 筆（詳見帳本）")
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
