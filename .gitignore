@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .env
 eodhd_key.env
+*.pkl
+data/us_eodhd_prices/
+data/us_panel.pkl
