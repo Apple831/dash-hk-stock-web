@@ -28,7 +28,7 @@ V22.5 修正（2026-07-23，出場明細上推播）：
 """
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core"))
 
@@ -136,11 +136,37 @@ def get_stock_name(ticker: str) -> str:
     return _load_tv_name_map().get(ticker, "")
 
 
+# ── 實驗天數計數（Day XX，交易日版，V22.5, 2026-07-28）────────────────────────
+# 起始日 = 2026-05-10（Day 1 = 起始日「當日或之後」的第一個交易日）。
+# ★用「^HSI 的 bar 數」數交易日★：恒指只在港股交易日有 K 棒，故「日期 ≥ 起始日的
+#   bar 數」= 真實交易日序號 → 自動處理週末 / 港假，無需維護假期表、無狀態、不怕漏跑。
+# _DAY_N 由 detect_hsi_regime()（每天第一個動作、早於任何 send_telegram）算好填入；
+#   send_telegram 讀取。HSI 取不到 → None → 該則不前置 Day（寧缺勿顯示錯號）。
+EXPERIMENT_START = date(2026, 5, 10)
+_DAY_N: int | None = None
+
+
+def _compute_trading_day_n(df) -> int | None:
+    """數 ^HSI bar 中日期 ≥ EXPERIMENT_START 的根數 = 交易日序號。取不到 / 出錯回 None。"""
+    try:
+        return sum(1 for d in df.index if d.date() >= EXPERIMENT_START)
+    except Exception:
+        return None
+
+
+def _day_header() -> str:
+    """回「Day N」；交易日序號未算出（HSI 不可用）→ 回 ""（send_telegram 不前置）。"""
+    return f"Day {_DAY_N}" if _DAY_N is not None else ""
+
+
 def detect_hsi_regime() -> dict:
     raw = get_stock_data("^HSI", "1y")
     if raw.empty:
         return {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0}
     df = calculate_indicators(raw)
+    # 交易日序號：^HSI bar 數 ≥ 起始日（自帶港假處理）；填入模組級 _DAY_N 供 send_telegram 前置。
+    global _DAY_N
+    _DAY_N = _compute_trading_day_n(df)
     result = detect_regime(df)
     return result if result else {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0}
 
@@ -236,7 +262,11 @@ def send_telegram(text: str) -> None:
     token   = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    resp = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=20)
+    # Day 計數置頂：單一插入點覆蓋所有推播路徑（命中/心跳/熊市閘/震盪市閘/失敗訊息），
+    # 免在各訊息字串重複加、也不會漏（module-G 覆蓋一致性）。HSI 不可用 → header="" → 不前置。
+    header = _day_header()
+    body = f"{header}\n{text}" if header else text
+    resp = requests.post(url, json={"chat_id": chat_id, "text": body}, timeout=20)
     resp.raise_for_status()
 
 
