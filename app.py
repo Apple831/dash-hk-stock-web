@@ -7,7 +7,8 @@ import dash_bootstrap_components as dbc
 from dash import html, dcc, callback, Output, Input
 
 from components import downloader   # 注冊 callbacks
-from data import get_cached
+from data import get_stock_data
+from indicators import calculate_indicators
 from regime import regime_history
 from config import REGIME_HISTORY_BARS
 
@@ -18,7 +19,7 @@ app = dash.Dash(
 )
 
 navbar = dbc.NavbarSimple(
-    brand="🏹 港股狙擊手 V22.3",
+    brand="🏹 港股狙擊手 V22.5",
     brand_href="/",
     color="dark",
     dark=True,
@@ -85,9 +86,13 @@ _REGIME_COLOR = {
 )
 def update_regime_banner(_):
     try:
-        df = get_cached("^HSI", "1y")
-        if df.empty:
+        # 走與 daily_scan 相同的新鮮路徑：get_stock_data（raw、1h TTL）+ calculate_indicators，
+        # 而非 get_cached（24h TTL 快取）→ banner 制度與 Telegram 掃描一致、不落後最多一天。
+        # 不動全域 get_cached，其他頁面瀏覽仍用 24h 快取、不受影響。
+        raw = get_stock_data("^HSI", "1y")
+        if raw.empty:
             raise ValueError("no data")
+        df = calculate_indicators(raw)
 
         # 一次向量化計算最近 120 bar 的制度序列；
         # 當前制度 = hist[-1]，回看找出本段持續長度。
