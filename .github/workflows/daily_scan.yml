@@ -30,8 +30,8 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5    # node24（v4 是 node20，9/16 從 runner 移除）
+      - uses: actions/setup-python@v6   # node24
         with:
           python-version: "3.11"
       - name: Install dependencies
