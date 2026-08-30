@@ -159,16 +159,93 @@ def _day_header() -> str:
     return f"Day {_DAY_N}" if _DAY_N is not None else ""
 
 
+# ── 日期攤平（專案通則）────────────────────────────────────────────────────────
+# 陷阱：pandas.Timestamp 與 datetime.datetime 都是 datetime.date 的「子類」，
+# isinstance(Timestamp, date) 回 True → 不先攔子類就會把帶時間的物件當純 date 用，
+# 之後與純 date 比較會 TypeError。故一律先攔子類再處理。
+def _as_date(x) -> date | None:
+    """把 Timestamp / datetime / date / 'YYYY-MM-DD' 攤成純 datetime.date；失敗回 None。"""
+    if x is None:
+        return None
+    try:
+        if hasattr(x, "to_pydatetime"):        # pandas.Timestamp
+            return x.to_pydatetime().date()
+        if isinstance(x, datetime):            # datetime（是 date 子類，須先攔）
+            return x.date()
+        if isinstance(x, date):
+            return x
+        return datetime.strptime(str(x)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+# ── 同 bar 去重（備援排程用）──────────────────────────────────────────────────
+# 背景：GitHub Actions schedule 高負載時會延遲數小時、甚至整批丟棄（本 repo 2026-08-27/28
+#   實測漂移 10h42m / 11h48m）。對策＝一天排多個 cron 拉高「至少跑成一次」的機率；
+#   代價＝可能一天跑多次 → 用「資料錨日」做冪等 key，同一根 bar 只推播一次。
+# 只有「成功推播」才寫狀態（send_telegram 內單一插入點，覆蓋全部推播路徑）；
+#   失敗訊息不寫 → 備援跑批仍會重試。
+_SCAN_STATE: dict = {"anchor": None, "sha": None, "armed": False, "done": False}
+
+
+def _force_scan() -> bool:
+    """workflow_dispatch 手動觸發時可帶 FORCE_SCAN=true 忽略去重（重跑同一根 bar）。"""
+    return os.environ.get("FORCE_SCAN", "").strip().lower() in ("1", "true", "yes")
+
+
+def _guard_already_pushed(date_str: str) -> bool:
+    """
+    True = 這根 bar 今天已經有跑批成功推播過 → 本次是備援排程，應靜默跳過。
+    去重不可用（無 GH_TOKEN / API 失敗）→ 回 False（寧可重複推，也不要漏推）。
+    """
+    if not pl.is_enabled():
+        print("[GUARD] 未設定 GH_TOKEN / GH_REPO → 同 bar 去重關閉（備援排程可能重複推播）", flush=True)
+        return False
+    state, sha = pl.load_state()
+    _SCAN_STATE.update(anchor=date_str, sha=sha, armed=True, done=False)
+    if _force_scan():
+        print(f"[GUARD] FORCE_SCAN=1 → 忽略去重，強制重跑錨日 {date_str}", flush=True)
+        return False
+    if state.get("last_anchor") == date_str:
+        print(
+            f"[GUARD] 錨日 {date_str} 已於 {state.get('pushed_at_hkt', '?')} "
+            f"由 run {state.get('run_id', '?')} 完成推播 → 本次備援排程靜默跳過",
+            flush=True,
+        )
+        return True
+    return False
+
+
+def _mark_scan_done() -> None:
+    """推播成功後寫狀態檔（同 bar 的後續備援跑批據此跳過）。失敗只印 log。"""
+    if not _SCAN_STATE["armed"] or _SCAN_STATE["done"] or not _SCAN_STATE["anchor"]:
+        return
+    now = datetime.now(timezone(timedelta(hours=8)))
+    state = {
+        "last_anchor": _SCAN_STATE["anchor"],          # 資料錨日 = ^HSI 最新 bar
+        "pushed_at_hkt": now.strftime("%Y-%m-%d %H:%M"),  # 實際推播時刻（HKT，看漂移用）
+        "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+        "run_number": os.environ.get("GITHUB_RUN_NUMBER", ""),
+    }
+    if pl.save_state(state, _SCAN_STATE["sha"], f"chore(scan): mark {_SCAN_STATE['anchor']}"):
+        _SCAN_STATE["done"] = True
+        print(f"[GUARD] 已標記錨日 {_SCAN_STATE['anchor']} 完成（{state['pushed_at_hkt']} HKT）", flush=True)
+
+
 def detect_hsi_regime() -> dict:
     raw = get_stock_data("^HSI", "1y")
     if raw.empty:
-        return {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0}
+        return {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0, "anchor_date": None}
     df = calculate_indicators(raw)
     # 交易日序號：^HSI bar 數 ≥ 起始日（自帶港假處理）；填入模組級 _DAY_N 供 send_telegram 前置。
     global _DAY_N
     _DAY_N = _compute_trading_day_n(df)
     result = detect_regime(df)
-    return result if result else {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0}
+    out = dict(result) if result else {"label": "未知", "bucket": "🟡 震盪市", "ma_gap_pct": 0.0}
+    # ★資料錨日★：^HSI 最新一根 bar 的日期 = 本批訊號真正來自哪一個交易日。
+    # 全流程（帳本 signal_date / 季節性濾網 / 推播日期）一律用它，不用 wall clock。
+    out["anchor_date"] = _as_date(df.index[-1])
+    return out
 
 
 def scan_all(presets: dict | None = None, current_month: int | None = None) -> list[dict]:
@@ -258,7 +335,12 @@ def build_message(hits: list[dict], regime_label: str, date_str: str,
         )
     return "\n".join(lines)
 
-def send_telegram(text: str) -> None:
+def send_telegram(text: str, mark_done: bool = True) -> None:
+    """
+    推播 Telegram。mark_done=True（正常路徑）在推播成功後寫「同 bar 已完成」狀態，
+    這是單一插入點、覆蓋全部推播路徑（命中/心跳/熊市閘/震盪市閘）——與 Day 計數同構。
+    ★失敗訊息必須傳 mark_done=False★：沒跑成就不能擋掉備援排程的重試。
+    """
     token   = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -268,6 +350,8 @@ def send_telegram(text: str) -> None:
     body = f"{header}\n{text}" if header else text
     resp = requests.post(url, json={"chat_id": chat_id, "text": body}, timeout=20)
     resp.raise_for_status()
+    if mark_done:
+        _mark_scan_done()
 
 
 # ── 帳本：價格 / 訊號注入函式 ────────────────────────────────────────────────
@@ -367,13 +451,37 @@ def _run_ledger(hits: list, date_str: str, size_mult: float = 1.0) -> str:
 
 def main() -> int:
     hkt_now = datetime.now(timezone(timedelta(hours=8)))
-    date_str = hkt_now.strftime("%Y-%m-%d")
+    date_str = hkt_now.strftime("%Y-%m-%d")   # 僅為 fallback；取到錨日後立刻覆寫
 
     try:
         regime = detect_hsi_regime()
         label = regime.get("label", "未知")
         bucket = regime.get("bucket", "🟡 震盪市")
         ma_gap_pct = regime.get("ma_gap_pct", 0.0)
+
+        # ── ★日期錨定資料，不用 wall clock★ ────────────────────────────────
+        # 原本 date_str = datetime.now()。GitHub Actions 排程漂移跨過午夜時（實測 10–12h），
+        # 訊號明明來自前一交易日收盤，卻被記成隔天甚至週六 → 帳本 signal_date 偏一天
+        # （process_pending_buys 要求 bar 日期「嚴格晚於」signal_date，成交會被推遲一個交易日）、
+        # 月底漂移還會翻轉 seasonal_filter 的月份判斷。改用 ^HSI 最新 bar 日期後，
+        # runner 幾點醒都不影響結果——同一根 bar 永遠得到同一個 date_str。
+        anchor = _as_date(regime.get("anchor_date"))
+        if anchor is None:
+            print(f"[ANCHOR] ⚠️ 取不到 ^HSI 錨日，退回 wall clock {date_str}（結果可能受排程漂移影響）", flush=True)
+        else:
+            date_str = anchor.isoformat()
+            lag_h = (hkt_now - datetime.combine(anchor, datetime.min.time(),
+                                                tzinfo=timezone(timedelta(hours=8)))).total_seconds() / 3600
+            print(f"[ANCHOR] 資料錨日 {date_str}｜執行時刻 {hkt_now:%Y-%m-%d %H:%M} HKT"
+                  f"（距錨日 00:00 約 {lag_h:.1f} 小時）", flush=True)
+            if lag_h > 96:
+                print(f"[ANCHOR] ⚠️ 錨日距今超過 4 天，^HSI 資料可能過期，請檢查 yfinance", flush=True)
+
+        # ── 同 bar 去重：備援排程若發現這根 bar 已推播過就靜默結束 ──────────
+        if _guard_already_pushed(date_str):
+            return 0
+
+        scan_month = anchor.month if anchor else hkt_now.month
         sign = "+" if ma_gap_pct >= 0 else ""
         # 制度建議定倉乘數（PIT：用前收制度 label）；帶入帳本記倉，使紙上帳本前向驗證 lift。
         size_mult = REGIME_SIZE_MULT.get(label, 1.0)
@@ -388,7 +496,7 @@ def main() -> int:
                     if (not rec_names) or (k in rec_names)
                 } or BEAR_EXEMPT_LIVE   # 若該制度沒列推薦，退回掃全部豁免策略
                 print(f"[GATE] 熊市制度（{label}），一般策略停；豁免掃描 {len(exempt_filtered)} 支", flush=True)
-                hits = scan_all(presets=exempt_filtered, current_month=hkt_now.month)
+                hits = scan_all(presets=exempt_filtered, current_month=scan_month)
                 prefix = (
                     f"⛔ [制度閘門] 當前制度：{label}（實盤禁區）。"
                     f"一般策略全停；僅熊市豁免策略（{len(exempt_filtered)} 支）續掃，"
@@ -446,13 +554,13 @@ def main() -> int:
         FULL_SCAN_LABELS = {"強牛市", "弱牛市"}
         if label in FULL_SCAN_LABELS:
             # 牛市也只掃 💎 實盤策略（LIVE_PRESETS），不洩漏 🔬 測試策略
-            hits = scan_all(presets=LIVE_PRESETS, current_month=hkt_now.month)
+            hits = scan_all(presets=LIVE_PRESETS, current_month=scan_month)
             prefix = ""
         else:
             rec_names = REGIME_RECOMMENDATIONS.get(label, [])
             if rec_names:
                 filtered = {k: v for k, v in LIVE_PRESETS.items() if k in rec_names}
-                hits = scan_all(presets=filtered, current_month=hkt_now.month)
+                hits = scan_all(presets=filtered, current_month=scan_month)
                 prefix = f"⚠️ {label}：只推送推薦策略（{len(filtered)} 個）"
             else:
                 hits = []
@@ -491,7 +599,8 @@ def main() -> int:
         import traceback
         traceback.print_exc()
         try:
-            send_telegram(f"🚨 港股狙擊手 掃描失敗\n📅 {date_str}\n❌ {type(e).__name__}: {e}")
+            send_telegram(f"🚨 港股狙擊手 掃描失敗\n📅 {date_str}\n❌ {type(e).__name__}: {e}",
+                          mark_done=False)   # 失敗不標記 → 備援排程仍會重試
         except Exception:
             pass
         return 1

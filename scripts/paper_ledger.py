@@ -29,6 +29,7 @@ ONE_SIDE_COST = 0.0023    # = SLIPPAGE_PCT(0.001) + COMMISSION_PCT(0.0026)/2
 MIN_HOLD_DAYS = 5         # 進場後未滿 5 交易日不允許策略 sell（對齊 backtest min_hold_days）
 TRADE_SIZE    = 100000    # 固定名目倉位（非複利，僅供記錄；P&L 以 return_pct 加總）
 LEDGER_PATH   = "data/paper_trades.json"
+STATE_PATH    = "data/last_scan.json"   # 每日掃描去重狀態（記錄已完成推播的資料錨日）
 
 GH_API = "https://api.github.com"
 
@@ -100,9 +101,14 @@ def _gh_headers() -> dict:
     }
 
 
-def _ledger_url() -> str:
+def _contents_url(path: str) -> str:
+    """任意 repo 內檔案的 Contents API URL（帳本 / 狀態檔共用）。"""
     _, repo = _gh_env()
-    return f"{GH_API}/repos/{repo}/contents/{LEDGER_PATH}"
+    return f"{GH_API}/repos/{repo}/contents/{path}"
+
+
+def _ledger_url() -> str:
+    return _contents_url(LEDGER_PATH)
 
 
 def load_ledger() -> tuple:
@@ -144,6 +150,52 @@ def save_ledger(trades: list, sha, message: str) -> bool:
         return True
     except Exception as e:
         print(f"[LEDGER] save_ledger 失敗：{type(e).__name__}: {e}", flush=True)
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 掃描狀態檔（data/last_scan.json）—— 備援排程的同 bar 去重
+# ══════════════════════════════════════════════════════════════════════════════
+# 為什麼要這個檔：GitHub Actions 的 schedule 事件在高負載時會延遲數小時、甚至整批被丟棄
+# （2026 年實測本 repo 出現 10–12 小時漂移）。對策是「一天排多個 cron」提高至少一次跑成的
+# 機率，但多次跑批不可以重複推播 / 重複記倉 → 用「資料錨日（^HSI 最新 bar 日期）」當冪等 key：
+# 同一根 bar 只有第一個成功推播的跑批會寫入狀態檔，之後的備援跑批讀到相同錨日就靜默跳過。
+# 失敗（沒推成）不寫狀態 → 備援跑批仍會重試，這正是要的行為。
+def load_state() -> tuple:
+    """
+    GET data/last_scan.json，回 (state_dict, sha)。
+    檔案不存在（404）回 ({}, None)；任何錯誤印 log 回 ({}, None)（去重退化為關閉，不擋主流程）。
+    """
+    try:
+        resp = requests.get(_contents_url(STATE_PATH), headers=_gh_headers(), timeout=20)
+        if resp.status_code == 404:
+            print("[STATE] 狀態檔不存在，視為首次執行（本次跑批會建立）", flush=True)
+            return {}, None
+        resp.raise_for_status()
+        data = resp.json()
+        raw = base64.b64decode(data.get("content", "")).decode("utf-8")
+        state = json.loads(raw) if raw.strip() else {}
+        return (state if isinstance(state, dict) else {}), data.get("sha")
+    except Exception as e:
+        print(f"[STATE] load_state 失敗（去重關閉，本次照跑）：{type(e).__name__}: {e}", flush=True)
+        return {}, None
+
+
+def save_state(state: dict, sha, message: str) -> bool:
+    """PUT data/last_scan.json。失敗印 log 回 False（不 raise）。"""
+    try:
+        content = json.dumps(state, ensure_ascii=False, indent=2)
+        body = {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        }
+        if sha:
+            body["sha"] = sha
+        resp = requests.put(_contents_url(STATE_PATH), headers=_gh_headers(), json=body, timeout=20)
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[STATE] save_state 失敗：{type(e).__name__}: {e}", flush=True)
         return False
 
 

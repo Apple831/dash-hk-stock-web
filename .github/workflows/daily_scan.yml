@@ -1,8 +1,30 @@
 name: Daily Stock Scan
+
+# ── 排程設計（2026-08-29）─────────────────────────────────────────────────────
+# GitHub Actions 的 schedule 事件是 best-effort：高負載時會延遲，負載夠高時整批被丟棄。
+# 本 repo 實測：平日正常約 +32~41 分（17:02–17:11 HKT），但 2026-08-27 漂移 10h42m、
+# 08-28 漂移 11h48m（推播分別落在 08-28 03:10 / 08-29 04:16 HKT）。
+# 單一 cron = 單點故障，一旦被丟棄就是「靜默沒有推播」。
+# 對策：主 cron 不動（維持慣常的 17:0x），另加三個備援時點拉高「至少跑成一次」的機率。
+# 重複跑批由 daily_scan.py 的「資料錨日（^HSI 最新 bar）」冪等去重，同一根 bar 只推播一次。
 on:
   schedule:
-    - cron: "30 8 * * 1-5"   # UTC 08:30 = HKT 16:30，週一至週五
-  workflow_dispatch:           # 允許手動觸發測試
+    - cron: "30 8 * * 1-5"    # 主要：UTC 08:30 = HKT 16:30（實際約 17:0x 送達）
+    - cron: "20 10 * * 1-5"   # 備援 1：UTC 10:20 = HKT 18:20
+    - cron: "40 12 * * 1-5"   # 備援 2：UTC 12:40 = HKT 20:40
+    - cron: "50 14 * * 1-5"   # 備援 3：UTC 14:50 = HKT 22:50
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "強制重跑（忽略同一根 bar 的去重）"
+        type: boolean
+        default: false
+
+# 同一時間只跑一個，且不取消排隊中的
+# （備援跑批要等主跑批寫完狀態才判斷去重，避免競態導致重複推播）
+concurrency:
+  group: daily-scan
+  cancel-in-progress: false
 
 jobs:
   scan:
@@ -20,4 +42,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_REPO: ${{ secrets.GH_REPO }}
+          FORCE_SCAN: ${{ github.event.inputs.force || 'false' }}
         run: python scripts/daily_scan.py
