@@ -431,7 +431,7 @@ def _run_ledger(hits: list, date_str: str, size_mult: float = 1.0) -> str:
         pl.process_pending_buys(trades, price_fn)            # 1. 昨日訊號 → 今日開盤成交
         pl.process_open_positions(trades, sig_fn, price_fn)  # 2. 出場（止損→超時→s2，T+1）
         pl.record_new_signals(trades, hits, date_str, strategy_params, size_mult=size_mult)  # 3. 今日新訊號（按制度乘數縮放記倉）
-        pl.save_ledger(trades, sha, f"chore(ledger): update {date_str}")
+        saved = pl.save_ledger(trades, sha, f"chore(ledger): update {date_str}")
         # 4. 出場事件明細（V22.5）：本次新觸發出場（明早平倉）＋ 本次完成平倉（今日已賣）。
         #    只來自帳本既有持倉 = 天然「只報買過的」，不掃全池 s2。
         #    放在帳本摘要之前 → 訊息序：買入訊號 → 賣出訊號 → 帳本摘要。
@@ -440,13 +440,22 @@ def _run_ledger(hits: list, date_str: str, size_mult: float = 1.0) -> str:
             name_fn=get_stock_name, price_fn=price_fn,
         )
         summary = pl.summarize(trades)
-        parts = [p for p in (exit_block, pl.format_ledger_summary(summary)) if p]
+        # ★寫入失敗必須外顯★（模組 G：落地那一步斷掉不能只留 log）
+        # 下方的出場明細/摘要都是「記憶體裡的 trades」算出來的，save_ledger 失敗時它們
+        # 看起來一切正常，但 data/paper_trades.json 根本沒更新 → 當日進出場全蒸發、
+        # 隔日跑批讀到舊帳本狀態錯開。最典型觸發＝GH_TOKEN PAT 過期（60 天一輪）。
+        warn = ("⚠️ 帳本寫入失敗（GH_TOKEN 可能過期）\n"
+                "本次進出場未保存，下方數字僅為當下試算") if not saved else ""
+        parts = [p for p in (warn, exit_block, pl.format_ledger_summary(summary)) if p]
         return "\n\n".join(parts)
     except Exception as e:
         print(f"[LEDGER] 帳本更新失敗（不影響主流程）：{type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc()
-        return ""
+        # 原本回 ""＝帳本尾巴整段消失，0 命中的心跳日幾乎看不出來。改為外顯一行；
+        # 只帶例外「類型」不帶訊息（訊息可能含 URL/參數），細節留在 Actions log。
+        return (f"⚠️ 帳本更新失敗：{type(e).__name__}\n"
+                f"本次進出場未保存，請檢查 Actions log")
 
 
 def main() -> int:
