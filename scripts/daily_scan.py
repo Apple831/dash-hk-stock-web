@@ -154,6 +154,53 @@ def _compute_trading_day_n(df) -> int | None:
         return None
 
 
+# ── 錨日多來源探測 ────────────────────────────────────────────────────────────
+# 為什麼不能單押 ^HSI：2026-09-01 凌晨四次跑批（#88–#91）從 yfinance 拿到的 ^HSI
+# 最新 bar 停在 8/28、其中一次還倒退到 8/27，而當天 Ivan 本機同一支 API 拿得到 8/31。
+# 同一 symbol 不同時間/不同機房回傳不同結果＝Yahoo 邊緣節點不一致，無法「修好」。
+# 且 data.py 的 `for sym in ["^HSI","2800.HK"]` fallback 只在 df.empty 時觸發，
+# 資料「過期但不空」完全不會啟動 → 形同虛設。
+# 對策：另外探測兩支流動性最好的標的，取三者中最新的 bar 日期當錨。
+PROBE_TICKERS = ["2800.HK", "0700.HK"]
+
+
+def _probe_anchor(hsi_anchor):
+    """回 (anchor, detail_dict)。取 ^HSI + 探測標的中最新的 bar 日期。"""
+    cands = {"^HSI": hsi_anchor}
+    for t in PROBE_TICKERS:
+        try:
+            df = get_stock_data(t, "1mo")
+            cands[t] = _as_date(df.index[-1]) if not df.empty else None
+        except Exception as e:
+            print(f"[ANCHOR] 探測 {t} 失敗：{type(e).__name__}: {e}", flush=True)
+            cands[t] = None
+    valid = {k: v for k, v in cands.items() if v is not None}
+    if not valid:
+        return None, cands
+    best = max(valid.values())
+    detail = "｜".join(f"{k}={v or '無'}" for k, v in cands.items())
+    lagging = [k for k, v in valid.items() if v < best]
+    if lagging:
+        print(f"[ANCHOR] ⚠️ 來源不一致，採用最新者 {best}（{detail}）"
+              f"；落後來源：{', '.join(lagging)}", flush=True)
+    else:
+        print(f"[ANCHOR] 來源一致：{detail}", flush=True)
+    return best, cands
+
+
+def _last_expected_trading_day(now_hkt) -> date:
+    """
+    粗估「此刻應該已經有 bar 的最近交易日」。不含港假日曆，所以遇到假期會偏樂觀，
+    寧可偶爾誤報也不要漏報——誤報成本＝一封多餘警告，漏報成本＝整天沒掃描且沒人知道。
+    """
+    d = now_hkt.date()
+    if now_hkt.weekday() < 5 and now_hkt.hour < 17:
+        d -= timedelta(days=1)          # 平日但還沒收盤/資料未出 → 看前一天
+    while d.weekday() >= 5:             # 週末往回退到週五
+        d -= timedelta(days=1)
+    return d
+
+
 def _day_header() -> str:
     """回「Day N」；交易日序號未算出（HSI 不可用）→ 回 ""（send_telegram 不前置）。"""
     return f"Day {_DAY_N}" if _DAY_N is not None else ""
@@ -185,7 +232,7 @@ def _as_date(x) -> date | None:
 #   代價＝可能一天跑多次 → 用「資料錨日」做冪等 key，同一根 bar 只推播一次。
 # 只有「成功推播」才寫狀態（send_telegram 內單一插入點，覆蓋全部推播路徑）；
 #   失敗訊息不寫 → 備援跑批仍會重試。
-_SCAN_STATE: dict = {"anchor": None, "sha": None, "armed": False, "done": False}
+_SCAN_STATE: dict = {"anchor": None, "sha": None, "armed": False, "done": False, "state": None}
 
 
 def _force_scan() -> bool:
@@ -195,18 +242,24 @@ def _force_scan() -> bool:
 
 def _guard_already_pushed(date_str: str) -> bool:
     """
-    True = 這根 bar 今天已經有跑批成功推播過 → 本次是備援排程，應靜默跳過。
+    True = 不應繼續掃描（同 bar 已推過 / 錨日倒退）。
     去重不可用（無 GH_TOKEN / API 失敗）→ 回 False（寧可重複推，也不要漏推）。
     """
     if not pl.is_enabled():
         print("[GUARD] 未設定 GH_TOKEN / GH_REPO → 同 bar 去重關閉（備援排程可能重複推播）", flush=True)
         return False
     state, sha = pl.load_state()
-    _SCAN_STATE.update(anchor=date_str, sha=sha, armed=True, done=False)
+    _SCAN_STATE.update(anchor=date_str, sha=sha, armed=True, done=False, state=state)
     if _force_scan():
         print(f"[GUARD] FORCE_SCAN=1 → 忽略去重，強制重跑錨日 {date_str}", flush=True)
         return False
-    if state.get("last_anchor") == date_str:
+    last = state.get("last_anchor")
+    # ★錨日倒退防呆★：比上次還舊 = 資料源異常，不是新 bar，絕不能當新資料推播。
+    # （#91 就是踩到這個：錨日從 8/28 退到 8/27 被當成新 bar，推了一封日期更舊的訊息。）
+    if last and date_str < last:
+        print(f"[GUARD] ⚠️ 錨日倒退：本次 {date_str} < 上次 {last} → 判為資料異常，不掃描不推播", flush=True)
+        return True
+    if last == date_str:
         print(
             f"[GUARD] 錨日 {date_str} 已於 {state.get('pushed_at_hkt', '?')} "
             f"由 run {state.get('run_id', '?')} 完成推播 → 本次備援排程靜默跳過",
@@ -214,6 +267,40 @@ def _guard_already_pushed(date_str: str) -> bool:
         )
         return True
     return False
+
+
+def _maybe_alert_stale(anchor, hkt_now) -> None:
+    """
+    ★把靜默換成吵★：錨日落後於「應該已有 bar 的最近交易日」時主動推警告。
+    沒有這道，資料源過期時整天不會有任何推播，而使用者以為系統在跑——8/31 就是這樣漏掉的。
+    同一個預期交易日只告警一次（狀態檔 stale_alert_for），避免四個備援排程推四封。
+    """
+    if anchor is None or not _SCAN_STATE["armed"]:
+        return
+    expected = _last_expected_trading_day(hkt_now)
+    if anchor >= expected:
+        return
+    state = dict(_SCAN_STATE.get("state") or {})
+    if state.get("stale_alert_for") == expected.isoformat():
+        print(f"[STALE] 預期交易日 {expected} 的過期告警已發過 → 不重複", flush=True)
+        return
+    lag_days = (expected - anchor).days
+    try:
+        send_telegram(
+            f"⚠️ 港股狙擊手 資料未更新\n"
+            f"📅 最新可用 bar：{anchor}\n"
+            f"📅 預期應有：{expected}（落後 {lag_days} 天）\n"
+            f"🕐 檢查時刻：{hkt_now:%Y-%m-%d %H:%M} HKT\n\n"
+            f"本次未執行掃描（避免用過期資料記帳）。\n"
+            f"若當日為港股假期則屬正常；否則為 yfinance 資料源問題。",
+            mark_done=False,
+        )
+    except Exception as e:
+        print(f"[STALE] 告警推播失敗：{type(e).__name__}: {e}", flush=True)
+        return
+    state["stale_alert_for"] = expected.isoformat()
+    if pl.save_state(state, _SCAN_STATE["sha"], f"chore(scan): stale alert {expected}"):
+        print(f"[STALE] 已發出過期告警並標記 {expected}", flush=True)
 
 
 def _mark_scan_done() -> None:
@@ -226,6 +313,7 @@ def _mark_scan_done() -> None:
         "pushed_at_hkt": now.strftime("%Y-%m-%d %H:%M"),  # 實際推播時刻（HKT，看漂移用）
         "run_id": os.environ.get("GITHUB_RUN_ID", ""),
         "run_number": os.environ.get("GITHUB_RUN_NUMBER", ""),
+        # 成功掃到新 bar = 資料源恢復正常 → 清掉過期告警標記，下次再壞會重新告警
     }
     if pl.save_state(state, _SCAN_STATE["sha"], f"chore(scan): mark {_SCAN_STATE['anchor']}"):
         _SCAN_STATE["done"] = True
@@ -474,7 +562,7 @@ def main() -> int:
         # （process_pending_buys 要求 bar 日期「嚴格晚於」signal_date，成交會被推遲一個交易日）、
         # 月底漂移還會翻轉 seasonal_filter 的月份判斷。改用 ^HSI 最新 bar 日期後，
         # runner 幾點醒都不影響結果——同一根 bar 永遠得到同一個 date_str。
-        anchor = _as_date(regime.get("anchor_date"))
+        anchor, _anchor_sources = _probe_anchor(_as_date(regime.get("anchor_date")))
         if anchor is None:
             print(f"[ANCHOR] ⚠️ 取不到 ^HSI 錨日，退回 wall clock {date_str}（結果可能受排程漂移影響）", flush=True)
         else:
@@ -488,6 +576,7 @@ def main() -> int:
 
         # ── 同 bar 去重：備援排程若發現這根 bar 已推播過就靜默結束 ──────────
         if _guard_already_pushed(date_str):
+            _maybe_alert_stale(anchor, hkt_now)   # 過期就吵，不要安靜地什麼都不做
             return 0
 
         scan_month = anchor.month if anchor else hkt_now.month
