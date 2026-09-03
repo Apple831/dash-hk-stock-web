@@ -278,9 +278,16 @@ def _maybe_alert_stale(anchor, hkt_now) -> None:
     if anchor is None or not _SCAN_STATE["armed"]:
         return
     expected = _last_expected_trading_day(hkt_now)
-    if anchor >= expected:
-        return
     state = dict(_SCAN_STATE.get("state") or {})
+    # ★用「歷來最好的資訊」判斷，不是「本次探測到的」★
+    # 錨日會因 Yahoo 抽風而倒退（9/1 19:25 掃到 9/1，9/2 00:55 探測卻退回 8/31）。
+    # 只看本次錨日就會在「那天其實已經成功掃完」的情況下誤報資料未更新。
+    # last_anchor = 已成功掃描並推播過的最新 bar，它已 ≥ expected 就代表那天沒漏掉。
+    last = state.get("last_anchor") or ""
+    effective = max(anchor.isoformat(), last)
+    if effective >= expected.isoformat():
+        print(f"[STALE] 預期交易日 {expected} 已涵蓋（本次錨日 {anchor}／已掃 {last or '無'}）→ 不告警", flush=True)
+        return
     if state.get("stale_alert_for") == expected.isoformat():
         print(f"[STALE] 預期交易日 {expected} 的過期告警已發過 → 不重複", flush=True)
         return
