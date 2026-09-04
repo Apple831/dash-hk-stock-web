@@ -232,12 +232,45 @@ def _as_date(x) -> date | None:
 #   代價＝可能一天跑多次 → 用「資料錨日」做冪等 key，同一根 bar 只推播一次。
 # 只有「成功推播」才寫狀態（send_telegram 內單一插入點，覆蓋全部推播路徑）；
 #   失敗訊息不寫 → 備援跑批仍會重試。
-_SCAN_STATE: dict = {"anchor": None, "sha": None, "armed": False, "done": False, "state": None}
+_SCAN_STATE: dict = {
+    "anchor": None, "sha": None, "armed": False, "done": False, "state": None,
+    "alerted": False,   # 狀態寫入失敗告警只推一次（同一次跑批有多條推播路徑時防重複）
+}
 
 
 def _force_scan() -> bool:
     """workflow_dispatch 手動觸發時可帶 FORCE_SCAN=true 忽略去重（重跑同一根 bar）。"""
     return os.environ.get("FORCE_SCAN", "").strip().lower() in ("1", "true", "yes")
+
+
+# 判斷「狀態檔已經是我們想要的樣子」時只比這幾個語意欄位；
+# pushed_at_hkt / run_id / run_number 是紀錄性欄位，不同跑批本來就不同，不能拿來比。
+_STATE_MATCH_KEYS = ("last_anchor", "stale_alert_for")
+
+
+def _state_already_written(fresh: dict, want: dict) -> bool:
+    """遠端狀態已含 want 的全部語意欄位 → 目的已達成（別的跑批先寫了），視為成功。"""
+    return all(fresh.get(k) == want.get(k) for k in _STATE_MATCH_KEYS)
+
+
+def _save_state_with_retry(state: dict, message: str) -> bool:
+    """
+    寫狀態檔；第一次失敗就重抓 sha 再試一次，兩次都失敗才回 False。
+    首次失敗最常見兩因：①sha 過期（本次跑批開頭讀到的 sha 已被別的跑批覆寫）
+    ②GitHub API 短暫抖動——兩者重抓 sha 即可解，屬「應該自動修好、不該打擾使用者」。
+    PAT 過期／權限被撤則兩次都會失敗 → 回 False 交給呼叫端外顯。
+    ★這是先前 #96/#97 重複推播的根因：save_state 回 False 被整個吞掉，
+      既沒重試也沒外顯（module-G：落地步驟失敗不能只留 log）。★
+    """
+    if pl.save_state(state, _SCAN_STATE["sha"], message):
+        return True
+    print("[STATE] 首次寫入失敗 → 重抓 sha 重試一次", flush=True)
+    fresh_state, fresh_sha = pl.load_state()   # 不會 raise：失敗回 ({}, None)
+    _SCAN_STATE["sha"] = fresh_sha
+    if _state_already_written(fresh_state, state):
+        print("[STATE] 遠端狀態已是目標內容（其他跑批先寫了）→ 視為成功", flush=True)
+        return True
+    return pl.save_state(state, fresh_sha, message)
 
 
 def _guard_already_pushed(date_str: str) -> bool:
@@ -249,7 +282,7 @@ def _guard_already_pushed(date_str: str) -> bool:
         print("[GUARD] 未設定 GH_TOKEN / GH_REPO → 同 bar 去重關閉（備援排程可能重複推播）", flush=True)
         return False
     state, sha = pl.load_state()
-    _SCAN_STATE.update(anchor=date_str, sha=sha, armed=True, done=False, state=state)
+    _SCAN_STATE.update(anchor=date_str, sha=sha, armed=True, done=False, state=state, alerted=False)
     if _force_scan():
         print(f"[GUARD] FORCE_SCAN=1 → 忽略去重，強制重跑錨日 {date_str}", flush=True)
         return False
@@ -306,8 +339,12 @@ def _maybe_alert_stale(anchor, hkt_now) -> None:
         print(f"[STALE] 告警推播失敗：{type(e).__name__}: {e}", flush=True)
         return
     state["stale_alert_for"] = expected.isoformat()
-    if pl.save_state(state, _SCAN_STATE["sha"], f"chore(scan): stale alert {expected}"):
+    if _save_state_with_retry(state, f"chore(scan): stale alert {expected}"):
         print(f"[STALE] 已發出過期告警並標記 {expected}", flush=True)
+    else:
+        # 標記沒寫成 → 備援排程會重推同一封過期告警。這裡刻意不另外推警告：
+        # 症狀本身（收到重複的「資料未更新」）就已經看得見，再加一封只是更吵。
+        print(f"[STALE] ⚠️ 過期告警標記寫入失敗 → 備援排程可能重複推送同一封告警", flush=True)
 
 
 def _mark_scan_done() -> None:
@@ -322,9 +359,38 @@ def _mark_scan_done() -> None:
         "run_number": os.environ.get("GITHUB_RUN_NUMBER", ""),
         # 成功掃到新 bar = 資料源恢復正常 → 清掉過期告警標記，下次再壞會重新告警
     }
-    if pl.save_state(state, _SCAN_STATE["sha"], f"chore(scan): mark {_SCAN_STATE['anchor']}"):
+    if _save_state_with_retry(state, f"chore(scan): mark {_SCAN_STATE['anchor']}"):
         _SCAN_STATE["done"] = True
         print(f"[GUARD] 已標記錨日 {_SCAN_STATE['anchor']} 完成（{state['pushed_at_hkt']} HKT）", flush=True)
+    else:
+        print(f"[GUARD] ⚠️ 錨日 {_SCAN_STATE['anchor']} 標記寫入失敗 → 去重失效，備援排程會重推", flush=True)
+        _alert_state_write_failed()
+
+
+def _alert_state_write_failed() -> None:
+    """
+    ★module-G：落地步驟失敗必須外顯，不能只留 log★
+    此時推播本身是成功的（訊息已送達），失敗的是「今日已推播」這個記錄。
+    後果＝稍後的備援排程查不到標記，會重跑並重推同一批訊號，
+    使用者端症狀是「一天收到多封相同內容」，而在此之前無從得知原因（#96/#97 就是這個）。
+    與已修好的 save_ledger 外顯屬同一型缺口。
+    ★必須 mark_done=False★：否則 send_telegram 會再呼叫 _mark_scan_done 造成遞迴。
+    """
+    if _SCAN_STATE["alerted"]:
+        return
+    _SCAN_STATE["alerted"] = True
+    try:
+        send_telegram(
+            "⚠️ 港股狙擊手 去重狀態寫入失敗\n"
+            f"📅 錨日：{_SCAN_STATE['anchor']}\n\n"
+            "上一封推播本身是成功的，但「今日已推播」未能記錄。\n"
+            "稍後的備援排程可能重推一次相同內容，可直接忽略。\n"
+            "帳本有冪等保護（同股同策略不會重複記倉），持倉與進出場不受影響。\n"
+            "若連日出現，請優先檢查 GH_TOKEN 是否已過期。",
+            mark_done=False,
+        )
+    except Exception as e:
+        print(f"[GUARD] 狀態寫入失敗告警本身也推播失敗：{type(e).__name__}: {e}", flush=True)
 
 
 def detect_hsi_regime() -> dict:
